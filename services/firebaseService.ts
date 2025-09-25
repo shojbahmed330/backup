@@ -1096,6 +1096,14 @@ export const firebaseService = {
         return doc.exists ? doc.data() as ChatSettings : null;
     },
 
+    listenToChatSettings(chatId: string, callback: (settings: ChatSettings | null) => void): () => void {
+        const settingsRef = db.collection('chatSettings').doc(chatId);
+        return settingsRef.onSnapshot(doc => {
+            const settings = doc.exists ? (doc.data() as ChatSettings) : { theme: 'default' };
+            callback(settings);
+        });
+    },
+
     async updateChatSettings(chatId: string, settings: Partial<ChatSettings>): Promise<void> {
         await db.collection('chatSettings').doc(chatId).set(removeUndefined(settings), { merge: true });
     },

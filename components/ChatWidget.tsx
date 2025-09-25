@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { User, Message, ReplyInfo, AppView } from '../types';
+import { User, Message, ReplyInfo, AppView, ChatSettings, ChatTheme } from '../types';
 import { firebaseService } from '../services/firebaseService';
 import { geminiService } from '../services/geminiService';
 import Icon from './Icon';
 import Waveform from './Waveform';
+import { CHAT_THEMES } from '../constants';
 
 interface ChatWidgetProps {
   currentUser: User;
@@ -37,6 +38,7 @@ const MessageBubble: React.FC<{
     isMe: boolean;
     peerUser: User;
     currentUser: User;
+    theme: typeof CHAT_THEMES[ChatTheme];
     onReply: (message: Message) => void;
     onReact: (messageId: string, emoji: string) => void;
     onUnsend: (messageId: string) => void;
@@ -44,7 +46,7 @@ const MessageBubble: React.FC<{
     onBlockUser: (user: User) => void;
     onAudioCall: () => void;
     onVideoCall: () => void;
-}> = ({ message, isMe, peerUser, currentUser, onReply, onReact, onUnsend, onViewProfile, onBlockUser, onAudioCall, onVideoCall }) => {
+}> = ({ message, isMe, peerUser, currentUser, theme, onReply, onReact, onUnsend, onViewProfile, onBlockUser, onAudioCall, onVideoCall }) => {
     const [isActionMenuOpen, setActionMenuOpen] = useState(false);
     const actionMenuRef = useRef<HTMLDivElement>(null);
     const [isProfileMenuOpen, setProfileMenuOpen] = useState(false);
@@ -90,7 +92,7 @@ const MessageBubble: React.FC<{
                         <span>{text}</span>
                     </div>
                 );
-            default: return <p className={`text-base break-words ${isJumboEmoji(message.text) ? 'jumbo-emoji animate-jumbo' : ''}`}>{message.text}</p>;
+            default: return <p className={`text-base break-words ${theme.text} ${isJumboEmoji(message.text) ? 'jumbo-emoji animate-jumbo' : ''}`}>{message.text}</p>;
         }
     };
     
@@ -106,6 +108,7 @@ const MessageBubble: React.FC<{
     
     const hasReactions = message.reactions && Object.values(message.reactions).flat().length > 0;
     const isJumbo = isJumboEmoji(message.text);
+    const bubbleClass = isMe ? theme.myBubble : theme.theirBubble;
 
     return (
         <div className={`w-full flex items-end gap-2.5 animate-slide-in-bottom ${isMe ? 'justify-end' : 'justify-start'}`}>
@@ -127,7 +130,7 @@ const MessageBubble: React.FC<{
             )}
             <div className={`flex flex-col gap-1 max-w-[80%] group ${isMe ? 'items-end' : 'items-start'}`}>
                 <div className="relative">
-                    <div className={`px-3 py-2 rounded-2xl ${isMe ? 'bg-rose-600 text-white rounded-br-none' : 'bg-slate-600 text-slate-100 rounded-bl-none'} ${isJumbo ? '!bg-transparent !p-0' : ''}`}>
+                    <div className={`px-3 py-2 rounded-2xl ${bubbleClass} ${isMe ? 'rounded-br-none' : 'rounded-bl-none'} ${isJumbo ? '!bg-transparent !p-0' : ''}`}>
                         {renderContent()}
                     </div>
                     {hasReactions && !isJumbo && (
@@ -174,6 +177,9 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
   
   const [recordingState, setRecordingState] = useState<RecordingState>(RecordingState.IDLE);
   const [audioPreview, setAudioPreview] = useState<{ url: string, blob: Blob, duration: number } | null>(null);
+  
+  const [settings, setSettings] = useState<ChatSettings>({ theme: 'default' });
+  const [isThemePickerOpen, setThemePickerOpen] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const mediaInputRef = useRef<HTMLInputElement>(null);
@@ -182,6 +188,8 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
   const timerRef = useRef<number | null>(null);
 
   const chatId = firebaseService.getChatId(currentUser.id, peerUser.id);
+  const activeTheme = CHAT_THEMES[settings.theme] || CHAT_THEMES.default;
+
 
   useEffect(() => {
     setIsChatRecording(recordingState === RecordingState.RECORDING);
@@ -190,7 +198,18 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
 
   useEffect(() => {
     const unsubscribe = firebaseService.listenToMessages(chatId, setMessages);
-    return () => unsubscribe();
+    const unsubscribeSettings = firebaseService.listenToChatSettings(chatId, (newSettings) => {
+        if (newSettings) {
+            setSettings(newSettings);
+        } else {
+            setSettings({ theme: 'default' });
+        }
+    });
+
+    return () => {
+        unsubscribe();
+        unsubscribeSettings();
+    };
   }, [chatId]);
 
   useEffect(() => {
@@ -277,6 +296,11 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
     }
   };
 
+  const handleThemeChange = (theme: ChatTheme) => {
+      firebaseService.updateChatSettings(chatId, { theme });
+      setThemePickerOpen(false);
+  }
+
   if (isMinimized) {
     return (
       <button onClick={() => onHeaderClick(peerUser.id)} className="w-60 h-12 bg-slate-800 border-t-2 border-fuchsia-500/50 rounded-t-lg flex items-center px-3 gap-2 shadow-lg hover:bg-slate-700">
@@ -292,34 +316,44 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
   }
 
   return (
-    <div className="fixed md:relative bottom-0 left-0 right-0 h-full md:w-80 md:h-[500px] bg-[#18191a] md:rounded-t-lg flex flex-col shadow-2xl border border-b-0 border-slate-700 font-sans">
-      <header className="flex-shrink-0 flex items-center justify-between p-2 bg-[#242526] md:rounded-t-lg border-b border-slate-700">
-        <button onClick={() => onHeaderClick(peerUser.id)} className="flex items-center gap-2 p-1 rounded-lg hover:bg-slate-700/50">
+    <div className={`fixed md:relative bottom-0 left-0 right-0 h-full md:w-80 md:h-[500px] bg-gradient-to-br ${activeTheme.bgGradient} md:rounded-t-lg flex flex-col shadow-2xl border border-b-0 border-slate-700 font-sans`} style={{ backgroundSize: '400% 400%', animation: 'gradient-animation 25s ease infinite' }}>
+      <header className="relative flex-shrink-0 flex items-center justify-between p-2 bg-black/20 backdrop-blur-sm md:rounded-t-lg border-b border-white/10">
+        <button onClick={() => onHeaderClick(peerUser.id)} className={`flex items-center gap-2 p-1 rounded-lg hover:bg-black/20`}>
           <div className="relative">
             <img src={peerUser.avatarUrl} alt={peerUser.name} className="w-9 h-9 rounded-full" />
             <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border border-slate-700 ${peerUser.onlineStatus === 'online' ? 'bg-green-500' : 'bg-slate-500'}`}/>
           </div>
-          <span onClick={(e) => { e.stopPropagation(); onNavigate(AppView.PROFILE, { username: peerUser.username }); }} className="text-white font-semibold hover:underline">{peerUser.name}</span>
+          <span onClick={(e) => { e.stopPropagation(); onNavigate(AppView.PROFILE, { username: peerUser.username }); }} className={`font-semibold hover:underline ${activeTheme.headerText}`}>{peerUser.name}</span>
         </button>
-        <div className="flex items-center text-fuchsia-400">
-          <button onClick={() => handleInitiateCall('audio')} className="p-2 rounded-full hover:bg-slate-700/50"><Icon name="phone" className="w-5 h-5"/></button>
-          <button onClick={() => handleInitiateCall('video')} className="p-2 rounded-full hover:bg-slate-700/50"><Icon name="video-camera" className="w-5 h-5"/></button>
-          <button onClick={(e) => { e.stopPropagation(); onMinimize(peerUser.id); }} className="p-2 rounded-full hover:bg-slate-700/50 hidden md:inline-block">
+        <div className={`flex items-center ${activeTheme.headerText}`}>
+          <button onClick={() => setThemePickerOpen(p => !p)} className="p-2 rounded-full hover:bg-black/20"><Icon name="swatch" className="w-5 h-5"/></button>
+          <button onClick={() => handleInitiateCall('audio')} className="p-2 rounded-full hover:bg-black/20"><Icon name="phone" className="w-5 h-5"/></button>
+          <button onClick={() => handleInitiateCall('video')} className="p-2 rounded-full hover:bg-black/20"><Icon name="video-camera" className="w-5 h-5"/></button>
+          <button onClick={(e) => { e.stopPropagation(); onMinimize(peerUser.id); }} className="p-2 rounded-full hover:bg-black/20 hidden md:inline-block">
              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5 10a1 1 0 011-1h8a1 1 0 110 2H6a1 1 0 01-1-1z" clipRule="evenodd" /></svg>
           </button>
-          <button onClick={(e) => { e.stopPropagation(); onClose(peerUser.id); }} className="p-2 rounded-full hover:bg-slate-700/50">
+          <button onClick={(e) => { e.stopPropagation(); onClose(peerUser.id); }} className="p-2 rounded-full hover:bg-black/20">
             <Icon name="close" className="w-5 h-5" />
           </button>
         </div>
+         {isThemePickerOpen && (
+              <div className="absolute top-full right-0 mt-1 w-64 bg-slate-800/90 backdrop-blur-md border border-slate-600 rounded-lg shadow-2xl z-30 p-2">
+                  <div className="grid grid-cols-5 gap-2">
+                      {Object.entries(CHAT_THEMES).map(([key, theme]) => (
+                          <button key={key} title={theme.name} onClick={() => handleThemeChange(key as ChatTheme)} className={`w-10 h-10 rounded-full bg-gradient-to-br ${theme.bgGradient} ring-2 ${settings.theme === key ? 'ring-white' : 'ring-transparent'}`}></button>
+                      ))}
+                  </div>
+              </div>
+          )}
       </header>
       <main className="relative flex-grow overflow-y-auto p-3 space-y-2 flex flex-col">
         {showHeartAnimation && <div className="heart-animation-container">{Array.from({ length: 10 }).map((_, i) => (<div key={i} className="heart" style={{ left: `${Math.random() * 80 + 10}%`, animationDelay: `${Math.random() * 1.5}s`, fontSize: `${Math.random() * 1.5 + 1}rem`}}>❤️</div>))}</div>}
         {messages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} isMe={msg.senderId === currentUser.id} peerUser={peerUser} currentUser={currentUser} onReply={setReplyingTo} onReact={handleReact} onUnsend={handleUnsend} onViewProfile={(u) => onNavigate(AppView.PROFILE, { username: u })} onBlockUser={(u) => { onBlockUser(u); onClose(u.id); }} onAudioCall={() => handleInitiateCall('audio')} onVideoCall={() => handleInitiateCall('video')} />
+            <MessageBubble key={msg.id} message={msg} isMe={msg.senderId === currentUser.id} peerUser={peerUser} currentUser={currentUser} theme={activeTheme} onReply={setReplyingTo} onReact={handleReact} onUnsend={handleUnsend} onViewProfile={(u) => onNavigate(AppView.PROFILE, { username: u })} onBlockUser={(u) => { onBlockUser(u); onClose(u.id); }} onAudioCall={() => handleInitiateCall('audio')} onVideoCall={() => handleInitiateCall('video')} />
         ))}
         <div ref={messagesEndRef} />
       </main>
-      <footer className="p-2 border-t border-slate-700">
+      <footer className="p-2 border-t border-white/10 bg-black/20">
         {replyingTo && <div className="text-xs text-slate-400 px-2 pb-1 flex justify-between items-center bg-slate-700/50 rounded-t-md -mx-2 -mt-2 mb-2 p-2"><span>Replying to {replyingTo.senderId === currentUser.id ? 'yourself' : peerUser.name}</span><button onClick={() => setReplyingTo(null)} className="font-bold"><Icon name="close" className="w-4 h-4" /></button></div>}
         <div className="flex items-center gap-2">
           <input type="file" ref={mediaInputRef} onChange={handleFileChange} accept="image/*,video/*" className="hidden"/>
@@ -328,7 +362,7 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
           <div className="flex-grow">
             {recordingState === RecordingState.RECORDING ? (<div className="bg-slate-700 rounded-full h-10 flex items-center px-4 justify-between"><div className="w-1/2 h-full"><Waveform isPlaying={true} isRecording /></div><button onClick={handleStopRecording} className="bg-rose-500 rounded-full p-2"><Icon name="pause" className="w-4 h-4 text-white"/></button></div>
             ) : audioPreview ? (<div className="bg-slate-700 rounded-full h-10 flex items-center px-4 justify-between"><p className="text-sm text-slate-300">Voice message ({audioPreview.duration}s)</p><button onClick={handleCancelRecording} className="p-1"><Icon name="close" className="w-4 h-4 text-slate-400"/></button></div>
-            ) : (<div className="relative"><textarea value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && !e.shiftKey) handleSendMessage(e); }} placeholder="Aa" rows={1} className="w-full bg-slate-700 text-slate-100 rounded-full py-2 px-4 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm resize-none pr-10"/></div>)}
+            ) : (<div className="relative"><textarea value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && !e.shiftKey) handleSendMessage(e); }} placeholder="Aa" rows={1} className={`w-full bg-slate-700 rounded-full py-2 px-4 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm resize-none pr-10 ${activeTheme.text}`} /></div>)}
           </div>
           <button type="button" onClick={() => handleSendMessage()} className="p-2 rounded-full text-fuchsia-400 hover:bg-slate-700/50" disabled={!newMessage.trim() && !audioPreview}><Icon name="paper-airplane" className="w-6 h-6" /></button>
         </div>

@@ -144,10 +144,9 @@ const ICONS: Record<IconName, React.ReactNode> = {
     </svg>
   ),
   swatch: (
-     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-       <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 4.5l7.5 7.5-7.5 7.5" />
-       <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-     </svg>
+     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4.098 19.902a3.75 3.75 0 005.304 0l6.401-6.402a3.75 3.75 0 00-.625-6.25a3.75 3.75 0 00-6.25-.625l-6.402 6.401a3.75 3.75 0 000 5.304m7.496-9.192a.75.75 0 011.06 0c3.128 3.127 8.217 8.217 8.217 8.217v.003c0 1.018-.349 1.94-.944 2.654l-2.02 2.019a3.75 3.75 0 01-5.303 0l-2.02-2.02a3.75 3.75 0 01-.944-2.654V12.5" />
+    </svg>
   ),
   coin: (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
