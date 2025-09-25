@@ -1,7 +1,7 @@
-import firebase from 'firebase/compat/app';
-import 'firebase/compat/auth';
-import 'firebase/compat/firestore';
-import 'firebase/compat/storage';
+import { initializeApp } from 'firebase/app';
+import { getAuth, initializeAuth, browserSessionPersistence } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
@@ -15,22 +15,14 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-const app = !firebase.apps.length ? firebase.initializeApp(firebaseConfig) : firebase.app();
-const auth = firebase.auth();
-const db = firebase.firestore();
-const storage = firebase.storage();
+const app = initializeApp(firebaseConfig);
 
 // Use browserSessionPersistence for Auth. This is more reliable in some sandboxed environments.
-auth.setPersistence(firebase.auth.Auth.Persistence.SESSION)
-  .catch((error) => {
-    console.error("Firebase: Auth session persistence failed. User may not stay logged in.", error);
-  });
+const auth = initializeAuth(app, {
+  persistence: browserSessionPersistence
+});
 
-// NOTE: The db.enablePersistence() call has been removed.
-// While it enables offline capabilities, it can be a source of complex issues
-// in certain browser environments (e.g., with ad-blockers, multiple tabs, or strict privacy settings),
-// often manifesting as CORS or network errors. Disabling it provides a more stable
-// online-only experience and is a common troubleshooting step for these kinds of problems.
-
+const db = getFirestore(app);
+const storage = getStorage(app);
 
 export { auth, db, storage, app };

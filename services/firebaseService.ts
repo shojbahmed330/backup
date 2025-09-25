@@ -1,16 +1,18 @@
 // @ts-nocheck
-import firebase from 'firebase/compat/app';
-import 'firebase/compat/auth';
-import 'firebase/compat/firestore';
-import 'firebase/compat/storage';
-import { User as FirebaseUser } from 'firebase/auth';
+import {
+    getFirestore, collection, doc, setDoc, getDoc, updateDoc, addDoc, deleteDoc, onSnapshot,
+    query, where, orderBy, limit, runTransaction, writeBatch, documentId,
+    serverTimestamp, increment, arrayUnion, arrayRemove, deleteField, Timestamp
+} from 'firebase/firestore';
+import {
+    getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
+    User as FirebaseUser
+} from 'firebase/auth';
+import { getStorage, ref, uploadBytes, getDownloadURL, uploadString } from 'firebase/storage';
 
 import { db, auth, storage } from './firebaseConfig';
 import { User, Post, Comment, Message, ReplyInfo, Story, Group, Campaign, LiveAudioRoom, LiveVideoRoom, Report, Notification, Lead, Author, AdminUser, FriendshipStatus, ChatSettings, Conversation, Call, LiveAudioRoomMessage, LiveVideoRoomMessage, VideoParticipantState } from '../types';
 import { DEFAULT_AVATARS, DEFAULT_COVER_PHOTOS, CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET, SPONSOR_CPM_BDT } from '../constants';
-
-const { serverTimestamp, increment, arrayUnion, arrayRemove, delete: deleteField } = firebase.firestore.FieldValue;
-const Timestamp = firebase.firestore.Timestamp;
 
 
 // --- Helper Functions ---
@@ -33,13 +35,13 @@ const docToUser = (doc: firebase.firestore.DocumentSnapshot): User => {
     } as User;
     
     // Convert Firestore Timestamps to ISO strings
-    if (user.createdAt && user.createdAt instanceof firebase.firestore.Timestamp) {
+    if (user.createdAt && user.createdAt instanceof Timestamp) {
         user.createdAt = user.createdAt.toDate().toISOString();
     }
-    if (user.commentingSuspendedUntil && user.commentingSuspendedUntil instanceof firebase.firestore.Timestamp) {
+    if (user.commentingSuspendedUntil && user.commentingSuspendedUntil instanceof Timestamp) {
         user.commentingSuspendedUntil = user.commentingSuspendedUntil.toDate().toISOString();
     }
-     if (user.lastActiveTimestamp && user.lastActiveTimestamp instanceof firebase.firestore.Timestamp) {
+     if (user.lastActiveTimestamp && user.lastActiveTimestamp instanceof Timestamp) {
         user.lastActiveTimestamp = user.lastActiveTimestamp.toDate().toISOString();
     }
     
@@ -51,11 +53,11 @@ const docToPost = (doc: firebase.firestore.DocumentSnapshot): Post => {
     return {
         ...data,
         id: doc.id,
-        createdAt: data.createdAt instanceof firebase.firestore.Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString(),
+        createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString(),
         reactions: data.reactions || {},
         comments: (data.comments || []).map(c => ({
             ...c,
-            createdAt: c.createdAt instanceof firebase.firestore.Timestamp ? c.createdAt.toDate().toISOString() : new Date().toISOString(),
+            createdAt: c.createdAt instanceof Timestamp ? c.createdAt.toDate().toISOString() : new Date().toISOString(),
         })),
         commentCount: data.commentCount || 0,
     } as Post;
@@ -126,7 +128,7 @@ const matchesTargeting = (campaign: Campaign, user: User): boolean => {
 export const firebaseService = {
     // --- Authentication ---
     onAuthStateChanged: (callback: (userAuth: { id: string } | null) => void) => {
-        return auth.onAuthStateChanged((firebaseUser: FirebaseUser | null) => {
+        return onAuthStateChanged(auth, (firebaseUser: FirebaseUser | null) => {
             if (firebaseUser) {
                 callback({ id: firebaseUser.uid });
             } else {
@@ -136,9 +138,9 @@ export const firebaseService = {
     },
 
     listenToCurrentUser(userId: string, callback: (user: User | null) => void) {
-        const userRef = db.collection('users').doc(userId);
-        return userRef.onSnapshot((doc) => {
-            if (doc.exists) {
+        const userRef = doc(db, 'users', userId);
+        return onSnapshot(userRef, (doc) => {
+            if (doc.exists()) {
                 callback(docToUser(doc));
             } else {
                 callback(null);
@@ -148,11 +150,11 @@ export const firebaseService = {
 
     async signUpWithEmail(email: string, pass: string, fullName: string, username: string): Promise<boolean> {
         try {
-            const userCredential = await auth.createUserWithEmailAndPassword(email, pass);
+            const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
             const user = userCredential.user;
             if (user) {
-                const userRef = db.collection('users').doc(user.uid);
-                const usernameRef = db.collection('usernames').doc(username.toLowerCase());
+                const userRef = doc(db, 'users', user.uid);
+                const usernameRef = doc(db, 'usernames', username.toLowerCase());
 
                 const newUserProfile: Omit<User, 'id' | 'createdAt'> = {
                     name: fullName,
@@ -172,8 +174,8 @@ export const firebaseService = {
                     lastActiveTimestamp: serverTimestamp(),
                 };
                 
-                await userRef.set(removeUndefined(newUserProfile));
-                await usernameRef.set({ userId: user.uid });
+                await setDoc(userRef, removeUndefined(newUserProfile));
+                await setDoc(usernameRef, { userId: user.uid });
                 return true;
             }
             return false;
@@ -192,9 +194,9 @@ export const firebaseService = {
             emailToSignIn = lowerIdentifier;
         } else {
             try {
-                const usernameDocRef = db.collection('usernames').doc(lowerIdentifier);
-                const usernameDoc = await usernameDocRef.get();
-                if (!usernameDoc.exists) throw new Error("Invalid details.");
+                const usernameDocRef = doc(db, 'usernames', lowerIdentifier);
+                const usernameDoc = await getDoc(usernameDocRef);
+                if (!usernameDoc.exists()) throw new Error("Invalid details.");
                 const userId = usernameDoc.data()!.userId;
                 const userProfile = await this.getUserProfileById(userId);
                 if (!userProfile) throw new Error("User profile not found.");
@@ -205,7 +207,7 @@ export const firebaseService = {
         }
 
         try {
-            await auth.signInWithEmailAndPassword(emailToSignIn, pass);
+            await signInWithEmailAndPassword(auth, emailToSignIn, pass);
         } catch (authError) {
             throw new Error("Invalid details. Please check your username/email and password.");
         }
@@ -219,7 +221,7 @@ export const firebaseService = {
                 console.error("Could not set user offline before signing out, but proceeding with sign out.", e);
             }
         }
-        await auth.signOut();
+        await signOut(auth);
     },
 
     async updateUserOnlineStatus(userId: string, status: 'online' | 'offline'): Promise<void> {
@@ -227,13 +229,13 @@ export const firebaseService = {
             console.warn("updateUserOnlineStatus called with no userId. Aborting.");
             return;
         }
-        const userRef = db.collection('users').doc(userId);
+        const userRef = doc(db, 'users', userId);
         try {
             const updateData: { onlineStatus: string; lastActiveTimestamp?: any } = { onlineStatus: status };
             if (status === 'offline') {
                 updateData.lastActiveTimestamp = serverTimestamp();
             }
-            await userRef.update(updateData);
+            await updateDoc(userRef, updateData);
         } catch (error) {
             // This can happen if the user logs out and rules prevent writes. It's okay to ignore.
             console.log(`Could not update online status for user ${userId}:`, error.message);
@@ -242,14 +244,15 @@ export const firebaseService = {
 
     // --- Notifications ---
     listenToNotifications(userId: string, callback: (notifications: Notification[]) => void) {
-        const q = db.collection('users').doc(userId).collection('notifications').orderBy('createdAt', 'desc').limit(20);
-        return q.onSnapshot((snapshot) => {
+        const notificationsRef = collection(db, 'users', userId, 'notifications');
+        const q = query(notificationsRef, orderBy('createdAt', 'desc'), limit(20));
+        return onSnapshot(q, (snapshot) => {
             const notifications = snapshot.docs.map(doc => {
                 const data = doc.data();
                 return {
                     id: doc.id,
                     ...data,
-                    createdAt: data.createdAt instanceof firebase.firestore.Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString(),
+                    createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString(),
                 } as Notification;
             });
             callback(notifications);
@@ -258,24 +261,24 @@ export const firebaseService = {
 
     async markNotificationsAsRead(userId: string, notificationIds: string[]): Promise<void> {
         if (notificationIds.length === 0) return;
-        const batch = db.batch();
-        const notificationsRef = db.collection('users').doc(userId).collection('notifications');
+        const batch = writeBatch(db);
+        const notificationsRef = collection(db, 'users', userId, 'notifications');
         notificationIds.forEach(id => {
-            batch.update(notificationsRef.doc(id), { read: true });
+            batch.update(doc(notificationsRef, id), { read: true });
         });
         await batch.commit();
     },
 
     async isUsernameTaken(username: string): Promise<boolean> {
-        const usernameDocRef = db.collection('usernames').doc(username.toLowerCase());
-        const usernameDoc = await usernameDocRef.get();
-        return usernameDoc.exists;
+        const usernameDocRef = doc(db, 'usernames', username.toLowerCase());
+        const usernameDoc = await getDoc(usernameDocRef);
+        return usernameDoc.exists();
     },
     
     async getUserProfileById(uid: string): Promise<User | null> {
-        const userDocRef = db.collection('users').doc(uid);
-        const userDoc = await userDocRef.get();
-        if (userDoc.exists) {
+        const userDocRef = doc(db, 'users', uid);
+        const userDoc = await getDoc(userDocRef);
+        if (userDoc.exists()) {
             return docToUser(userDoc);
         }
         return null;
@@ -283,11 +286,12 @@ export const firebaseService = {
 
      async getUsersByIds(userIds: string[]): Promise<User[]> {
         if (userIds.length === 0) return [];
-        const usersRef = db.collection('users');
+        const usersRef = collection(db, 'users');
         const userPromises: Promise<firebase.firestore.QuerySnapshot>[] = [];
         for (let i = 0; i < userIds.length; i += 10) {
             const chunk = userIds.slice(i, i + 10);
-            userPromises.push(usersRef.where(firebase.firestore.FieldPath.documentId(), 'in', chunk).get());
+            const q = query(usersRef, where(documentId(), 'in', chunk));
+            userPromises.push(getDocs(q));
         }
         const userSnapshots = await Promise.all(userPromises);
         const users: User[] = [];
@@ -299,12 +303,13 @@ export const firebaseService = {
 
     // --- Friends (New Secure Flow) ---
     async getFriendRequests(userId: string): Promise<User[]> {
-        const q = db.collection('friendRequests')
-            .where('to.id', '==', userId)
-            .where('status', '==', 'pending')
-            .orderBy('createdAt', 'desc');
+        const friendRequestsRef = collection(db, 'friendRequests');
+        const q = query(friendRequestsRef,
+            where('to.id', '==', userId),
+            where('status', '==', 'pending'),
+            orderBy('createdAt', 'desc'));
         
-        const snapshot = await q.get();
+        const snapshot = await getDocs(q);
         const requesters = snapshot.docs.map(doc => doc.data().from as User);
         return requesters;
     },
@@ -322,9 +327,9 @@ export const firebaseService = {
         
         try {
             const requestId = `${currentUserId}_${targetUserId}`;
-            const requestDocRef = db.collection('friendRequests').doc(requestId);
+            const requestDocRef = doc(db, 'friendRequests', requestId);
 
-            await requestDocRef.set({
+            await setDoc(requestDocRef, {
                 from: { id: sender.id, name: sender.name, avatarUrl: sender.avatarUrl, username: sender.username },
                 to: { id: receiver.id, name: receiver.name, avatarUrl: receiver.avatarUrl, username: receiver.username },
                 status: 'pending',
@@ -339,21 +344,20 @@ export const firebaseService = {
     },
 
     async acceptFriendRequest(currentUserId: string, requestingUserId: string): Promise<void> {
-        const currentUserRef = db.collection('users').doc(currentUserId);
-        const requestingUserRef = db.collection('users').doc(requestingUserId);
-        const requestDocRef = db.collection('friendRequests').doc(`${requestingUserId}_${currentUserId}`);
+        const currentUserRef = doc(db, 'users', currentUserId);
+        const requestingUserRef = doc(db, 'users', requestingUserId);
+        const requestDocRef = doc(db, 'friendRequests', `${requestingUserId}_${currentUserId}`);
         
-        // Notification for the user who SENT the request
-        const notificationRef = db.collection('users').doc(requestingUserId).collection('notifications').doc(); 
+        const notificationRef = doc(collection(db, 'users', requestingUserId, 'notifications')); 
 
-        await db.runTransaction(async (transaction) => {
+        await runTransaction(db, async (transaction) => {
             const requestDoc = await transaction.get(requestDocRef);
-            if (!requestDoc.exists || requestDoc.data()?.status !== 'pending') {
+            if (!requestDoc.exists() || requestDoc.data()?.status !== 'pending') {
                 throw new Error("Friend request not found or already handled.");
             }
             
             const currentUserDoc = await transaction.get(currentUserRef);
-            if (!currentUserDoc.exists) {
+            if (!currentUserDoc.exists()) {
                 throw new Error("Current user profile not found.");
             }
             const currentUserData = currentUserDoc.data();
@@ -365,7 +369,6 @@ export const firebaseService = {
             // 2. Create a notification for the original sender.
             transaction.set(notificationRef, {
                 type: 'friend_request_approved',
-                // The user who initiated the notification (the one who accepted)
                 user: { 
                     id: currentUserId, 
                     name: currentUserData.name, 
@@ -382,17 +385,17 @@ export const firebaseService = {
     },
 
     async declineFriendRequest(currentUserId: string, requestingUserId: string): Promise<void> {
-        const requestDocRef = db.collection('friendRequests').doc(`${requestingUserId}_${currentUserId}`);
-        await requestDocRef.delete();
+        const requestDocRef = doc(db, 'friendRequests', `${requestingUserId}_${currentUserId}`);
+        await deleteDoc(requestDocRef);
     },
 
     async unfriendUser(currentUserId: string, targetUserId: string): Promise<boolean> {
-        const currentUserRef = db.collection('users').doc(currentUserId);
-        const targetUserRef = db.collection('users').doc(targetUserId);
+        const currentUserRef = doc(db, 'users', currentUserId);
+        const targetUserRef = doc(db, 'users', targetUserId);
         try {
-            await db.runTransaction(async (transaction) => {
+            await runTransaction(db, async (transaction) => {
                 transaction.update(currentUserRef, { friendIds: arrayRemove(targetUserId) });
-                transaction.update(targetUserRef, { friendIds: arrayRemove(currentUserId) });
+                transaction.update(targetUserRef, { friendIds: arrayRemove(targetUserId) });
             });
             return true;
         } catch (error) {
@@ -402,9 +405,9 @@ export const firebaseService = {
     },
 
     async cancelFriendRequest(currentUserId: string, targetUserId: string): Promise<boolean> {
-        const requestDocRef = db.collection('friendRequests').doc(`${currentUserId}_${targetUserId}`);
+        const requestDocRef = doc(db, 'friendRequests', `${currentUserId}_${targetUserId}`);
         try {
-            await requestDocRef.delete();
+            await deleteDoc(requestDocRef);
             return true;
         } catch (error) {
             console.error("Error cancelling friend request:", error);
@@ -419,18 +422,18 @@ export const firebaseService = {
         }
         
         try {
-            const sentRequestRef = db.collection('friendRequests').doc(`${currentUserId}_${profileUserId}`);
-            const receivedRequestRef = db.collection('friendRequests').doc(`${profileUserId}_${currentUserId}`);
+            const sentRequestRef = doc(db, 'friendRequests', `${currentUserId}_${profileUserId}`);
+            const receivedRequestRef = doc(db, 'friendRequests', `${profileUserId}_${currentUserId}`);
     
-            const [sentSnap, receivedSnap] = await Promise.all([sentRequestRef.get(), receivedRequestRef.get()]);
+            const [sentSnap, receivedSnap] = await Promise.all([getDoc(sentRequestRef), getDoc(receivedRequestRef)]);
     
-            if (sentSnap.exists) {
+            if (sentSnap.exists()) {
                 const status = sentSnap.data()?.status;
                 if (status === 'accepted') return FriendshipStatus.FRIENDS;
                 return FriendshipStatus.REQUEST_SENT;
             }
     
-            if (receivedSnap.exists) {
+            if (receivedSnap.exists()) {
                 const status = receivedSnap.data()?.status;
                 if (status === 'accepted') return FriendshipStatus.FRIENDS;
                 return FriendshipStatus.PENDING_APPROVAL;
@@ -445,12 +448,13 @@ export const firebaseService = {
     },
 
     listenToFriendRequests(userId: string, callback: (requestingUsers: User[]) => void) {
-        const q = db.collection('friendRequests')
-            .where('to.id', '==', userId)
-            .where('status', '==', 'pending')
-            .orderBy('createdAt', 'desc');
+        const friendRequestsRef = collection(db, 'friendRequests');
+        const q = query(friendRequestsRef,
+            where('to.id', '==', userId),
+            where('status', '==', 'pending'),
+            orderBy('createdAt', 'desc'));
         
-        return q.onSnapshot(snapshot => {
+        return onSnapshot(q, snapshot => {
             const requesters = snapshot.docs.map(doc => doc.data().from as User);
             callback(requesters);
         });
@@ -487,8 +491,9 @@ export const firebaseService = {
 
     // --- Posts ---
     listenToFeedPosts(currentUserId: string, friendIds: string[], blockedUserIds: string[], callback: (posts: Post[]) => void) {
-        const q = db.collection('posts').orderBy('createdAt', 'desc').limit(50);
-        return q.onSnapshot(async (snapshot) => {
+        const postsRef = collection(db, 'posts');
+        const q = query(postsRef, orderBy('createdAt', 'desc'), limit(50));
+        return onSnapshot(q, async (snapshot) => {
             const feedPosts = snapshot.docs.map(docToPost);
     
             const filtered = feedPosts.filter(p => {
@@ -505,11 +510,12 @@ export const firebaseService = {
     },
 
     listenToExplorePosts(currentUserId: string, callback: (posts: Post[]) => void) {
-        const q = db.collection('posts')
-            .where('author.privacySettings.postVisibility', '==', 'public')
-            .orderBy('createdAt', 'desc')
-            .limit(50);
-        return q.onSnapshot((snapshot) => {
+        const postsRef = collection(db, 'posts');
+        const q = query(postsRef,
+            where('author.privacySettings.postVisibility', '==', 'public'),
+            orderBy('createdAt', 'desc'),
+            limit(50));
+        return onSnapshot(q, (snapshot) => {
             const explorePosts = snapshot.docs
                 .map(docToPost)
                 .filter(post => post.author.id !== currentUserId && !post.isSponsored);
@@ -518,32 +524,34 @@ export const firebaseService = {
     },
 
     async getExplorePosts(currentUserId: string): Promise<Post[]> {
-        const q = db.collection('posts')
-            .where('author.privacySettings.postVisibility', '==', 'public')
-            .orderBy('createdAt', 'desc')
-            .limit(50);
-        const snapshot = await q.get();
+        const postsRef = collection(db, 'posts');
+        const q = query(postsRef,
+            where('author.privacySettings.postVisibility', '==', 'public'),
+            orderBy('createdAt', 'desc'),
+            limit(50));
+        const snapshot = await getDocs(q);
         return snapshot.docs
             .map(docToPost)
             .filter(post => post.author.id !== currentUserId && !post.isSponsored);
     },
 
     listenToReelsPosts(callback: (posts: Post[]) => void) {
-        const q = db.collection('posts')
-            .where('videoUrl', '!=', null)
-            .orderBy('videoUrl')
-            .orderBy('createdAt', 'desc')
-            .limit(50);
-        return q.onSnapshot((snapshot) => {
+        const postsRef = collection(db, 'posts');
+        const q = query(postsRef,
+            where('videoUrl', '!=', null),
+            orderBy('videoUrl'),
+            orderBy('createdAt', 'desc'),
+            limit(50));
+        return onSnapshot(q, (snapshot) => {
             const reelsPosts = snapshot.docs.map(docToPost);
             callback(reelsPosts);
         });
     },
 
     listenToPost(postId: string, callback: (post: Post | null) => void): () => void {
-        const postRef = db.collection('posts').doc(postId);
-        return postRef.onSnapshot((doc) => {
-            if (doc.exists) {
+        const postRef = doc(db, 'posts', postId);
+        return onSnapshot(postRef, (doc) => {
+            if (doc.exists()) {
                 callback(docToPost(doc));
             } else {
                 callback(null);
@@ -604,14 +612,14 @@ export const firebaseService = {
             postToSave.audioUrl = url;
         }
 
-        await db.collection('posts').add(removeUndefined(postToSave));
+        await addDoc(collection(db, 'posts'), removeUndefined(postToSave));
     },
 
     async deletePost(postId: string, userId: string): Promise<boolean> {
-        const postRef = db.collection('posts').doc(postId);
+        const postRef = doc(db, 'posts', postId);
         try {
-            const postDoc = await postRef.get();
-            if (!postDoc.exists) {
+            const postDoc = await getDoc(postRef);
+            if (!postDoc.exists()) {
                 throw new Error("Post not found");
             }
 
@@ -621,7 +629,7 @@ export const firebaseService = {
                 return false;
             }
 
-            await postRef.delete();
+            await deleteDoc(postRef);
             return true;
 
         } catch (error) {
@@ -631,11 +639,11 @@ export const firebaseService = {
     },
     
     async reactToPost(postId: string, userId: string, newReaction: string): Promise<boolean> {
-        const postRef = db.collection('posts').doc(postId);
+        const postRef = doc(db, 'posts', postId);
         try {
-            await db.runTransaction(async (transaction) => {
+            await runTransaction(db, async (transaction) => {
                 const postDoc = await transaction.get(postRef);
-                if (!postDoc.exists) throw "Post does not exist!";
+                if (!postDoc.exists()) throw "Post does not exist!";
     
                 const postData = postDoc.data() as Post;
                 const reactions = { ...(postData.reactions || {}) };
@@ -658,11 +666,11 @@ export const firebaseService = {
     },
 
     async reactToComment(postId: string, commentId: string, userId: string, newReaction: string): Promise<boolean> {
-        const postRef = db.collection('posts').doc(postId);
+        const postRef = doc(db, 'posts', postId);
         try {
-            await db.runTransaction(async (transaction) => {
+            await runTransaction(db, async (transaction) => {
                 const postDoc = await transaction.get(postRef);
-                if (!postDoc.exists) throw "Post does not exist!";
+                if (!postDoc.exists()) throw "Post does not exist!";
     
                 const postData = postDoc.data() as Post;
                 const comments = postData.comments || [];
@@ -697,10 +705,10 @@ export const firebaseService = {
             return null;
         }
     
-        const postRef = db.collection('posts').doc(postId);
+        const postRef = doc(db, 'posts', postId);
     
         const newComment: any = {
-            id: db.collection('posts').doc().id,
+            id: doc(collection(db, 'posts')).id, // Generate a unique ID client-side
             postId,
             author: {
                 id: user.id, name: user.name, username: user.username, avatarUrl: user.avatarUrl,
@@ -726,7 +734,7 @@ export const firebaseService = {
             throw new Error("Comment must have content.");
         }
         
-        await postRef.update({
+        await updateDoc(postRef, {
             comments: arrayUnion(removeUndefined(newComment)),
             commentCount: increment(1),
         });
@@ -738,11 +746,11 @@ export const firebaseService = {
     },
 
     async editComment(postId: string, commentId: string, newText: string): Promise<void> {
-        const postRef = db.collection('posts').doc(postId);
+        const postRef = doc(db, 'posts', postId);
         try {
-            await db.runTransaction(async (transaction) => {
+            await runTransaction(db, async (transaction) => {
                 const postDoc = await transaction.get(postRef);
-                if (!postDoc.exists) throw "Post does not exist!";
+                if (!postDoc.exists()) throw "Post does not exist!";
     
                 const postData = postDoc.data() as Post;
                 const comments = [...postData.comments] || [];
@@ -761,11 +769,11 @@ export const firebaseService = {
     },
 
     async deleteComment(postId: string, commentId: string): Promise<void> {
-        const postRef = db.collection('posts').doc(postId);
+        const postRef = doc(db, 'posts', postId);
         try {
-            await db.runTransaction(async (transaction) => {
+            await runTransaction(db, async (transaction) => {
                 const postDoc = await transaction.get(postRef);
-                if (!postDoc.exists) throw "Post does not exist!";
+                if (!postDoc.exists()) throw "Post does not exist!";
     
                 const postData = postDoc.data() as Post;
                 const comments = [...postData.comments] || [];
@@ -787,12 +795,12 @@ export const firebaseService = {
     },
 
     async voteOnPoll(userId: string, postId: string, optionIndex: number): Promise<Post | null> {
-        const postRef = db.collection('posts').doc(postId);
+        const postRef = doc(db, 'posts', postId);
         try {
             let updatedPostData: Post | null = null;
-            await db.runTransaction(async (transaction) => {
+            await runTransaction(db, async (transaction) => {
                 const postDoc = await transaction.get(postRef);
-                if (!postDoc.exists) {
+                if (!postDoc.exists()) {
                     throw "Post does not exist!";
                 }
     
@@ -835,10 +843,10 @@ export const firebaseService = {
     },
 
     async markBestAnswer(userId: string, postId: string, commentId: string): Promise<Post | null> {
-        const postRef = db.collection('posts').doc(postId);
+        const postRef = doc(db, 'posts', postId);
         try {
-            const postDoc = await postRef.get();
-            if (!postDoc.exists) {
+            const postDoc = await getDoc(postRef);
+            if (!postDoc.exists()) {
                 throw "Post does not exist!";
             }
             const postData = postDoc.data() as Post;
@@ -853,9 +861,9 @@ export const firebaseService = {
                  throw "Comment does not exist on this post.";
             }
     
-            await postRef.update({ bestAnswerId: commentId });
+            await updateDoc(postRef, { bestAnswerId: commentId });
             
-            const updatedPostDoc = await postRef.get();
+            const updatedPostDoc = await getDoc(postRef);
             return docToPost(updatedPostDoc);
         } catch (e) {
             console.error("Marking best answer failed:", e);
@@ -870,7 +878,7 @@ export const firebaseService = {
 
     async ensureChatDocumentExists(user1: User, user2: User): Promise<string> {
         const chatId = firebaseService.getChatId(user1.id, user2.id);
-        const chatRef = db.collection('chats').doc(chatId);
+        const chatRef = doc(db, 'chats', chatId);
     
         let enrichedUser1 = { ...user1 };
         let enrichedUser2 = { ...user2 };
@@ -891,7 +899,7 @@ export const firebaseService = {
                 throw new Error(`Could not resolve a username for one of the chat participants (${enrichedUser1.id}, ${enrichedUser2.id}). This may be a data consistency issue.`);
             }
             
-            await chatRef.set({
+            await setDoc(chatRef, {
                 participants: [enrichedUser1.id, enrichedUser2.id],
                 participantInfo: {
                     [enrichedUser1.id]: { name: enrichedUser1.name, username: enrichedUser1.username, avatarUrl: enrichedUser1.avatarUrl },
@@ -907,8 +915,9 @@ export const firebaseService = {
     },
 
     listenToMessages(chatId: string, callback: (messages: Message[]) => void): () => void {
-        const messagesRef = db.collection('chats').doc(chatId).collection('messages').orderBy('createdAt', 'asc');
-        return messagesRef.onSnapshot(snapshot => {
+        const messagesRef = collection(db, 'chats', chatId, 'messages');
+        const q = query(messagesRef, orderBy('createdAt', 'asc'));
+        return onSnapshot(q, snapshot => {
             const messages = snapshot.docs.map(doc => {
                 const data = doc.data();
                 return {
@@ -922,9 +931,10 @@ export const firebaseService = {
     },
 
     listenToConversations(userId: string, callback: (convos: Conversation[]) => void): () => void {
-        const q = db.collection('chats').where('participants', 'array-contains', userId).orderBy('lastUpdated', 'desc');
+        const chatsRef = collection(db, 'chats');
+        const q = query(chatsRef, where('participants', 'array-contains', userId), orderBy('lastUpdated', 'desc'));
 
-        return q.onSnapshot(async (snapshot) => {
+        return onSnapshot(q, async (snapshot) => {
             const conversations: Conversation[] = [];
             for (const doc of snapshot.docs) {
                 const data = doc.data();
@@ -958,8 +968,8 @@ export const firebaseService = {
     },
 
     async sendMessage(chatId: string, sender: User, recipient: User, messageContent: any): Promise<void> {
-        const chatRef = db.collection('chats').doc(chatId);
-        const messagesRef = chatRef.collection('messages');
+        const chatRef = doc(db, 'chats', chatId);
+        const messagesRef = collection(chatRef, 'messages');
         
         const newMessage: Omit<Message, 'id' | 'createdAt'> = {
             senderId: sender.id,
@@ -971,6 +981,7 @@ export const firebaseService = {
         if (messageContent.text) newMessage.text = messageContent.text;
         if (messageContent.duration) newMessage.duration = messageContent.duration;
         if (messageContent.replyTo) newMessage.replyTo = messageContent.replyTo;
+        if (messageContent.mediaUrl) newMessage.mediaUrl = messageContent.mediaUrl; // Added for animated emojis
 
         if (messageContent.mediaFile) {
             const { url } = await uploadMediaToCloudinary(messageContent.mediaFile, `chat_${chatId}_${Date.now()}`);
@@ -991,7 +1002,7 @@ export const firebaseService = {
             createdAt: serverTimestamp(),
         };
         
-        const docRef = await messagesRef.add(removeUndefined(messageWithTimestamp));
+        const docRef = await addDoc(messagesRef, removeUndefined(messageWithTimestamp));
 
         const lastMessageForDoc = removeUndefined({
             ...newMessage,
@@ -999,7 +1010,7 @@ export const firebaseService = {
             createdAt: new Date().toISOString()
         });
 
-        await chatRef.set({
+        await setDoc(chatRef, {
             participants: [sender.id, recipient.id],
             participantInfo: {
                 [sender.id]: { name: sender.name, username: sender.username, avatarUrl: sender.avatarUrl },
@@ -1007,17 +1018,13 @@ export const firebaseService = {
             },
             lastMessage: lastMessageForDoc,
             lastUpdated: serverTimestamp(),
+            [`unreadCount.${recipient.id}`]: increment(1)
         }, { merge: true });
-
-        const unreadCountField = `unreadCount.${recipient.id}`;
-        await chatRef.update({
-            [unreadCountField]: increment(1)
-        });
     },
 
     async markMessagesAsRead(chatId: string, userId: string): Promise<void> {
-        const chatRef = db.collection('chats').doc(chatId);
-        await chatRef.set({
+        const chatRef = doc(db, 'chats', chatId);
+        await setDoc(chatRef, {
             unreadCount: {
                 [userId]: 0
             }
@@ -1025,20 +1032,20 @@ export const firebaseService = {
     },
 
     async unsendMessage(chatId: string, messageId: string, userId: string): Promise<void> {
-        const messageRef = db.collection('chats').doc(chatId).collection('messages').doc(messageId);
-        const messageDoc = await messageRef.get();
-        if (messageDoc.exists && messageDoc.data()?.senderId === userId) {
-            await messageRef.update({
+        const messageRef = doc(db, 'chats', chatId, 'messages', messageId);
+        const messageDoc = await getDoc(messageRef);
+        if (messageDoc.exists() && messageDoc.data()?.senderId === userId) {
+            await updateDoc(messageRef, {
                 isDeleted: true,
                 text: deleteField(),
                 mediaUrl: deleteField(),
                 audioUrl: deleteField(),
                 reactions: {}
             });
-            const chatRef = db.collection('chats').doc(chatId);
-            const chatDoc = await chatRef.get();
-            if(chatDoc.exists && chatDoc.data().lastMessage.id === messageId) {
-                await chatRef.update({
+            const chatRef = doc(db, 'chats', chatId);
+            const chatDoc = await getDoc(chatRef);
+            if(chatDoc.exists() && chatDoc.data().lastMessage.id === messageId) {
+                await updateDoc(chatRef, {
                     'lastMessage.isDeleted': true,
                     'lastMessage.text': deleteField(),
                     'lastMessage.mediaUrl': deleteField(),
@@ -1049,10 +1056,10 @@ export const firebaseService = {
     },
 
     async reactToMessage(chatId: string, messageId: string, userId: string, emoji: string): Promise<void> {
-        const messageRef = db.collection('chats').doc(chatId).collection('messages').doc(messageId);
-        await db.runTransaction(async (transaction) => {
+        const messageRef = doc(db, 'chats', chatId, 'messages', messageId);
+        await runTransaction(db, async (transaction) => {
             const messageDoc = await transaction.get(messageRef);
-            if (!messageDoc.exists) throw "Message not found";
+            if (!messageDoc.exists()) throw "Message not found";
 
             const reactions = messageDoc.data()?.reactions || {};
             const previousReaction = Object.keys(reactions).find(key => reactions[key].includes(userId));
@@ -1079,38 +1086,42 @@ export const firebaseService = {
     },
 
     async deleteChatHistory(chatId: string): Promise<void> {
-        const messagesRef = db.collection('chats').doc(chatId).collection('messages');
-        const snapshot = await messagesRef.limit(500).get(); 
+        const messagesRef = collection(db, 'chats', chatId, 'messages');
+        const q = query(messagesRef, limit(500));
+        const snapshot = await getDocs(q); 
         if (snapshot.size === 0) {
-            await db.collection('chats').doc(chatId).delete();
+            await deleteDoc(doc(db, 'chats', chatId));
             return;
         }
-        const batch = db.batch();
+        const batch = writeBatch(db);
         snapshot.docs.forEach(doc => batch.delete(doc.ref));
         await batch.commit();
         return this.deleteChatHistory(chatId);
     },
 
     async getChatSettings(chatId: string): Promise<ChatSettings | null> {
-        const doc = await db.collection('chatSettings').doc(chatId).get();
-        return doc.exists ? doc.data() as ChatSettings : null;
+        const docRef = doc(db, 'chatSettings', chatId);
+        const docSnap = await getDoc(docRef);
+        return docSnap.exists() ? docSnap.data() as ChatSettings : null;
     },
 
     listenToChatSettings(chatId: string, callback: (settings: ChatSettings | null) => void): () => void {
-        const settingsRef = db.collection('chatSettings').doc(chatId);
-        return settingsRef.onSnapshot(doc => {
-            const settings = doc.exists ? (doc.data() as ChatSettings) : { theme: 'default' };
+        const settingsRef = doc(db, 'chatSettings', chatId);
+        return onSnapshot(settingsRef, doc => {
+            const settings = doc.exists() ? (doc.data() as ChatSettings) : { theme: 'default' };
             callback(settings);
         });
     },
 
     async updateChatSettings(chatId: string, settings: Partial<ChatSettings>): Promise<void> {
-        await db.collection('chatSettings').doc(chatId).set(removeUndefined(settings), { merge: true });
+        const settingsRef = doc(db, 'chatSettings', chatId);
+        await setDoc(settingsRef, removeUndefined(settings), { merge: true });
     },
     // --- Profile & Security ---
     async getUserProfile(username: string): Promise<User | null> {
-        const q = db.collection('users').where('username', '==', username.toLowerCase()).limit(1);
-        const userQuery = await q.get();
+        const usersRef = collection(db, 'users');
+        const q = query(usersRef, where('username', '==', username.toLowerCase()), limit(1));
+        const userQuery = await getDocs(q);
         if (!userQuery.empty) {
             return docToUser(userQuery.docs[0]);
         }
@@ -1118,30 +1129,30 @@ export const firebaseService = {
     },
 
     listenToUserProfile(username: string, callback: (user: User | null) => void) {
-        const q = db.collection('users').where('username', '==', username.toLowerCase()).limit(1);
-        return q.onSnapshot(
-            (snapshot) => {
-                if (!snapshot.empty) {
-                    callback(docToUser(snapshot.docs[0]));
-                } else {
-                    callback(null);
-                }
-            },
-            (error) => {
-                console.error("Error listening to user profile by username:", error);
+        const usersRef = collection(db, 'users');
+        const q = query(usersRef, where('username', '==', username.toLowerCase()), limit(1));
+        return onSnapshot(q, (snapshot) => {
+            if (!snapshot.empty) {
+                callback(docToUser(snapshot.docs[0]));
+            } else {
                 callback(null);
             }
-        );
+        },
+        (error) => {
+            console.error("Error listening to user profile by username:", error);
+            callback(null);
+        });
     },
 
     async getPostsByUser(userId: string): Promise<Post[]> {
-        const q = db.collection('posts').where('author.id', '==', userId).orderBy('createdAt', 'desc');
-        const postQuery = await q.get();
+        const postsRef = collection(db, 'posts');
+        const q = query(postsRef, where('author.id', '==', userId), orderBy('createdAt', 'desc'));
+        const postQuery = await getDocs(q);
         return postQuery.docs.map(docToPost);
     },
     
     async updateProfile(userId: string, updates: Partial<User>): Promise<void> {
-        const userRef = db.collection('users').doc(userId);
+        const userRef = doc(db, 'users', userId);
         const updatesToSave = { ...updates };
     
         if (updates.name) {
@@ -1149,7 +1160,7 @@ export const firebaseService = {
         }
     
         try {
-            await userRef.update(removeUndefined(updatesToSave));
+            await updateDoc(userRef, removeUndefined(updatesToSave));
         } catch (error) {
             console.error("Error updating user profile in Firebase:", error);
             throw error;
@@ -1157,15 +1168,15 @@ export const firebaseService = {
     },
 
     async updateProfilePicture(userId: string, base64Url: string, caption?: string, captionStyle?: Post['captionStyle']): Promise<{ updatedUser: User; newPost: Post } | null> {
-        const userRef = db.collection('users').doc(userId);
+        const userRef = doc(db, 'users', userId);
         try {
             const blob = await fetch(base64Url).then(res => res.blob());
             const { url: newAvatarUrl } = await uploadMediaToCloudinary(blob, `avatar_${userId}_${Date.now()}.jpeg`);
 
-            await userRef.update({ avatarUrl: newAvatarUrl });
+            await updateDoc(userRef, { avatarUrl: newAvatarUrl });
 
-            const userDoc = await userRef.get();
-            if (!userDoc.exists) return null;
+            const userDoc = await getDoc(userRef);
+            if (!userDoc.exists()) return null;
             const user = docToUser(userDoc);
 
             const authorInfo: Author = {
@@ -1189,8 +1200,8 @@ export const firebaseService = {
                 duration: 0,
             };
 
-            const postRef = await db.collection('posts').add(removeUndefined(newPostData));
-            const newPostDoc = await postRef.get();
+            const postRef = await addDoc(collection(db, 'posts'), removeUndefined(newPostData));
+            const newPostDoc = await getDoc(postRef);
             const newPost = docToPost(newPostDoc);
 
             const updatedUser = { ...user, avatarUrl: newAvatarUrl };
@@ -1203,15 +1214,15 @@ export const firebaseService = {
     },
 
     async updateCoverPhoto(userId: string, base64Url: string, caption?: string, captionStyle?: Post['captionStyle']): Promise<{ updatedUser: User; newPost: Post } | null> {
-        const userRef = db.collection('users').doc(userId);
+        const userRef = doc(db, 'users', userId);
         try {
             const blob = await fetch(base64Url).then(res => res.blob());
             const { url: newCoverUrl } = await uploadMediaToCloudinary(blob, `cover_${userId}_${Date.now()}.jpeg`);
 
-            await userRef.update({ coverPhotoUrl: newCoverUrl });
+            await updateDoc(userRef, { coverPhotoUrl: newCoverUrl });
 
-            const userDoc = await userRef.get();
-            if (!userDoc.exists) return null;
+            const userDoc = await getDoc(userRef);
+            if (!userDoc.exists()) return null;
             const user = docToUser(userDoc);
 
             const authorInfo: Author = {
@@ -1235,8 +1246,8 @@ export const firebaseService = {
                 duration: 0,
             };
 
-            const postRef = await db.collection('posts').add(removeUndefined(newPostData));
-            const newPostDoc = await postRef.get();
+            const postRef = await addDoc(collection(db, 'posts'), removeUndefined(newPostData));
+            const newPostDoc = await getDoc(postRef);
             const newPost = docToPost(newPostDoc);
 
             const updatedUser = { ...user, coverPhotoUrl: newCoverUrl };
@@ -1250,10 +1261,11 @@ export const firebaseService = {
     
      async searchUsers(query: string): Promise<User[]> {
         const lowerQuery = query.toLowerCase();
-        const nameQuery = db.collection('users').where('name_lowercase', '>=', lowerQuery).where('name_lowercase', '<=', lowerQuery + '\uf8ff');
-        const usernameQuery = db.collection('users').where('username', '>=', lowerQuery).where('username', '<=', lowerQuery + '\uf8ff');
+        const usersRef = collection(db, 'users');
+        const nameQuery = query(usersRef, where('name_lowercase', '>=', lowerQuery), where('name_lowercase', '<=', lowerQuery + '\uf8ff'));
+        const usernameQuery = query(usersRef, where('username', '>=', lowerQuery), where('username', '<=', lowerQuery + '\uf8ff'));
         
-        const [nameSnapshot, usernameSnapshot] = await Promise.all([nameQuery.get(), usernameQuery.get()]);
+        const [nameSnapshot, usernameSnapshot] = await Promise.all([getDocs(nameQuery), getDocs(usernameQuery)]);
         
         const results = new Map<string, User>();
         nameSnapshot.docs.forEach(d => results.set(d.id, docToUser(d)));
@@ -1263,13 +1275,13 @@ export const firebaseService = {
     },
 
     async blockUser(currentUserId: string, targetUserId: string): Promise<boolean> {
-        const currentUserRef = db.collection('users').doc(currentUserId);
-        const targetUserRef = db.collection('users').doc(targetUserId);
+        const currentUserRef = doc(db, 'users', currentUserId);
+        const targetUserRef = doc(db, 'users', targetUserId);
         try {
-            await db.runTransaction(async (transaction) => {
-                transaction.update(currentUserRef, { blockedUserIds: arrayUnion(targetUserId) });
-                transaction.update(targetUserRef, { blockedUserIds: arrayUnion(currentUserId) });
-            });
+            const batch = writeBatch(db);
+            batch.update(currentUserRef, { blockedUserIds: arrayUnion(targetUserId) });
+            batch.update(targetUserRef, { blockedUserIds: arrayUnion(currentUserId) });
+            await batch.commit();
             return true;
         } catch (error) {
             console.error("Failed to block user:", error);
@@ -1278,13 +1290,13 @@ export const firebaseService = {
     },
 
     async unblockUser(currentUserId: string, targetUserId: string): Promise<boolean> {
-        const currentUserRef = db.collection('users').doc(currentUserId);
-        const targetUserRef = db.collection('users').doc(targetUserId);
+        const currentUserRef = doc(db, 'users', currentUserId);
+        const targetUserRef = doc(db, 'users', targetUserId);
         try {
-            await db.runTransaction(async (transaction) => {
-                transaction.update(currentUserRef, { blockedUserIds: arrayRemove(targetUserId) });
-                transaction.update(targetUserRef, { blockedUserIds: arrayRemove(currentUserId) });
-            });
+            const batch = writeBatch(db);
+            batch.update(currentUserRef, { blockedUserIds: arrayRemove(targetUserId) });
+            batch.update(targetUserRef, { blockedUserIds: arrayRemove(currentUserId) });
+            await batch.commit();
             return true;
         } catch (error) {
             console.error("Failed to unblock user:", error);
@@ -1293,9 +1305,9 @@ export const firebaseService = {
     },
 
     async deactivateAccount(userId: string): Promise<boolean> {
-        const userRef = db.collection('users').doc(userId);
+        const userRef = doc(db, 'users', userId);
         try {
-            await userRef.update({ isDeactivated: true });
+            await updateDoc(userRef, { isDeactivated: true });
             return true;
         } catch (error) {
             console.error("Failed to deactivate account:", error);
@@ -1305,9 +1317,9 @@ export const firebaseService = {
 
     // --- Voice Coins ---
     async updateVoiceCoins(userId: string, amount: number): Promise<boolean> {
-        const userRef = db.collection('users').doc(userId);
+        const userRef = doc(db, 'users', userId);
         try {
-            await userRef.update({
+            await updateDoc(userRef, {
                 voiceCoins: increment(amount)
             });
             return true;
@@ -1319,7 +1331,7 @@ export const firebaseService = {
     
     // --- 1-on-1 Calls ---
     async createCall(caller: User, callee: User, chatId: string, type: 'audio' | 'video'): Promise<string> {
-        const callRef = db.collection('calls').doc();
+        const callRef = doc(collection(db, 'calls'));
         const callData: Omit<Call, 'id'> = {
             caller: { id: caller.id, name: caller.name, username: caller.username, avatarUrl: caller.avatarUrl },
             callee: { id: callee.id, name: callee.name, username: callee.username, avatarUrl: callee.avatarUrl },
@@ -1328,17 +1340,18 @@ export const firebaseService = {
             status: 'ringing',
             createdAt: new Date().toISOString(),
         };
-        await callRef.set(callData);
+        await setDoc(callRef, callData);
         return callRef.id;
     },
 
     listenForIncomingCalls(userId: string, callback: (call: Call | null) => void): () => void {
-        const q = db.collection('calls')
-            .where('callee.id', '==', userId)
-            .where('status', '==', 'ringing')
-            .limit(1);
+        const callsRef = collection(db, 'calls');
+        const q = query(callsRef,
+            where('callee.id', '==', userId),
+            where('status', '==', 'ringing'),
+            limit(1));
 
-        return q.onSnapshot(snapshot => {
+        return onSnapshot(q, snapshot => {
             if (snapshot.empty) {
                 callback(null);
                 return;
@@ -1348,22 +1361,22 @@ export const firebaseService = {
             const call: Call = {
                 id: doc.id,
                 ...data,
-                createdAt: data.createdAt instanceof firebase.firestore.Timestamp ? data.createdAt.toDate().toISOString() : data.createdAt,
+                createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate().toISOString() : data.createdAt,
             } as Call;
             callback(call);
         });
     },
 
     listenToCall(callId: string, callback: (call: Call | null) => void): () => void {
-        const callRef = db.collection('calls').doc(callId);
-        return callRef.onSnapshot(doc => {
-            if (doc.exists) {
+        const callRef = doc(db, 'calls', callId);
+        return onSnapshot(callRef, doc => {
+            if (doc.exists()) {
                 const data = doc.data();
                  const call: Call = {
                     id: doc.id,
                     ...data,
-                    createdAt: data.createdAt instanceof firebase.firestore.Timestamp ? data.createdAt.toDate().toISOString() : data.createdAt,
-                    endedAt: data.endedAt instanceof firebase.firestore.Timestamp ? data.endedAt.toDate().toISOString() : data.endedAt,
+                    createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate().toISOString() : data.createdAt,
+                    endedAt: data.endedAt instanceof Timestamp ? data.endedAt.toDate().toISOString() : data.endedAt,
                 } as Call;
                 callback(call);
             } else {
@@ -1373,16 +1386,16 @@ export const firebaseService = {
     },
 
     async updateCallStatus(callId: string, status: Call['status']): Promise<void> {
-        const callRef = db.collection('calls').doc(callId);
+        const callRef = doc(db, 'calls', callId);
         const updateData: { status: Call['status'], endedAt?: any } = { status };
 
-        const callDocBeforeUpdate = await callRef.get();
+        const callDocBeforeUpdate = await getDoc(callRef);
         const callDataBeforeUpdate = callDocBeforeUpdate.data() as Call;
 
         if (['ended', 'rejected', 'missed', 'declined'].includes(status)) {
             updateData.endedAt = serverTimestamp();
         }
-        await callRef.update(updateData);
+        await updateDoc(callRef, updateData);
 
         if (['ended', 'rejected', 'missed', 'declined'].includes(status) && callDataBeforeUpdate) {
             let durationInSeconds = 0;
@@ -1404,60 +1417,59 @@ export const firebaseService = {
             };
 
             const chatId = callDataBeforeUpdate.chatId;
-            const chatRef = db.collection('chats').doc(chatId);
-            const messagesRef = chatRef.collection('messages');
+            const chatRef = doc(db, 'chats', chatId);
+            const messagesRef = collection(chatRef, 'messages');
             
-            const messageDocRef = await messagesRef.add(historyMessage);
+            const messageDocRef = await addDoc(messagesRef, historyMessage);
             const lastMessageForDoc = removeUndefined({ ...historyMessage, id: messageDocRef.id, createdAt: new Date().toISOString() });
             
-            await chatRef.update({
+            await updateDoc(chatRef, {
                 lastMessage: lastMessageForDoc,
                 lastUpdated: serverTimestamp()
             });
 
             setTimeout(() => {
-                callRef.delete().catch(e => console.error("Failed to clean up call document:", e));
+                deleteDoc(callRef).catch(e => console.error("Failed to clean up call document:", e));
             }, 5000);
         }
     },
 
     // --- Rooms ---
 listenToLiveAudioRooms(callback: (rooms: LiveAudioRoom[]) => void) {
-    const q = db.collection('liveAudioRooms').where('status', '==', 'live');
-    return q.onSnapshot((snapshot) => {
+    const q = query(collection(db, 'liveAudioRooms'), where('status', '==', 'live'));
+    return onSnapshot(q, (snapshot) => {
         const rooms = snapshot.docs.map(d => {
             const data = d.data();
             return {
                 id: d.id,
                 ...data,
-                createdAt: data.createdAt instanceof firebase.firestore.Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString()
+                createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString()
             } as LiveAudioRoom;
         });
         callback(rooms);
     });
 },
 listenToLiveAudioRoomMessages(roomId: string, callback: (messages: LiveAudioRoomMessage[]) => void) {
-    const q = db.collection('liveAudioRooms').doc(roomId).collection('messages').orderBy('createdAt', 'asc').limitToLast(50);
-    return q.onSnapshot(snapshot => {
+    const q = query(collection(db, 'liveAudioRooms', roomId, 'messages'), orderBy('createdAt', 'asc'), limit(50));
+    return onSnapshot(q, snapshot => {
         const messages = snapshot.docs.map(doc => {
             const data = doc.data();
             return {
                 id: doc.id,
                 ...data,
-                createdAt: data.createdAt instanceof firebase.firestore.Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString(),
+                createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString(),
             } as LiveAudioRoomMessage;
         });
         callback(messages);
     });
 },
 async reactToLiveAudioRoomMessage(roomId: string, messageId: string, userId: string, emoji: string): Promise<void> {
-    const messageRef = db.collection('liveAudioRooms').doc(roomId).collection('messages').doc(messageId);
+    const messageRef = doc(db, 'liveAudioRooms', roomId, 'messages', messageId);
     try {
-        await db.runTransaction(async (transaction) => {
+        await runTransaction(db, async (transaction) => {
             const messageDoc = await transaction.get(messageRef);
-            if (!messageDoc.exists) {
-                throw "Message does not exist!";
-            }
+            if (!messageDoc.exists()) throw "Message does not exist!";
+
             const messageData = messageDoc.data();
             const reactions = { ...(messageData.reactions || {}) };
 
@@ -1471,19 +1483,13 @@ async reactToLiveAudioRoomMessage(roomId: string, messageId: string, userId: str
 
             if (previousReaction === emoji) {
                 reactions[previousReaction] = reactions[previousReaction].filter((id: string) => id !== userId);
-                if (reactions[previousReaction].length === 0) {
-                    delete reactions[previousReaction];
-                }
+                if (reactions[previousReaction].length === 0) delete reactions[previousReaction];
             } else {
                 if (previousReaction) {
                     reactions[previousReaction] = reactions[previousReaction].filter((id: string) => id !== userId);
-                     if (reactions[previousReaction].length === 0) {
-                        delete reactions[previousReaction];
-                    }
+                     if (reactions[previousReaction].length === 0) delete reactions[previousReaction];
                 }
-                if (!reactions[emoji]) {
-                    reactions[emoji] = [];
-                }
+                if (!reactions[emoji]) reactions[emoji] = [];
                 reactions[emoji].push(userId);
             }
 
@@ -1495,42 +1501,32 @@ async reactToLiveAudioRoomMessage(roomId: string, messageId: string, userId: str
 },
 async sendLiveAudioRoomMessage(roomId: string, sender: User, text: string, isHost: boolean, isSpeaker: boolean): Promise<void> {
     const messageData = {
-        sender: {
-            id: sender.id,
-            name: sender.name,
-            avatarUrl: sender.avatarUrl,
-        },
-        text,
-        isHost,
-        isSpeaker,
-        createdAt: serverTimestamp(),
-        reactions: {},
+        sender: { id: sender.id, name: sender.name, avatarUrl: sender.avatarUrl },
+        text, isHost, isSpeaker, createdAt: serverTimestamp(), reactions: {},
     };
-    await db.collection('liveAudioRooms').doc(roomId).collection('messages').add(messageData);
+    await addDoc(collection(db, 'liveAudioRooms', roomId, 'messages'), messageData);
 },
 listenToLiveVideoRooms(callback: (rooms: LiveVideoRoom[]) => void) {
-    const q = db.collection('liveVideoRooms').where('status', '==', 'live');
-    return q.onSnapshot((snapshot) => {
+    const q = query(collection(db, 'liveVideoRooms'), where('status', '==', 'live'));
+    return onSnapshot(q, (snapshot) => {
         const rooms = snapshot.docs.map(d => {
             const data = d.data();
             return {
-                id: d.id,
-                ...data,
-                createdAt: data.createdAt instanceof firebase.firestore.Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString()
+                id: d.id, ...data,
+                createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString()
             } as LiveVideoRoom;
         });
         callback(rooms);
     });
 },
 listenToLiveVideoRoomMessages(roomId: string, callback: (messages: LiveVideoRoomMessage[]) => void) {
-    const q = db.collection('liveVideoRooms').doc(roomId).collection('messages').orderBy('createdAt', 'asc').limitToLast(50);
-    return q.onSnapshot(snapshot => {
+    const q = query(collection(db, 'liveVideoRooms', roomId, 'messages'), orderBy('createdAt', 'asc'), limit(50));
+    return onSnapshot(q, snapshot => {
         const messages = snapshot.docs.map(doc => {
             const data = doc.data();
             return {
-                id: doc.id,
-                ...data,
-                createdAt: data.createdAt instanceof firebase.firestore.Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString(),
+                id: doc.id, ...data,
+                createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString(),
             } as LiveVideoRoomMessage;
         });
         callback(messages);
@@ -1538,25 +1534,19 @@ listenToLiveVideoRoomMessages(roomId: string, callback: (messages: LiveVideoRoom
 },
 async sendLiveVideoRoomMessage(roomId: string, sender: User, text: string): Promise<void> {
     const messageData = {
-        sender: {
-            id: sender.id,
-            name: sender.name,
-            avatarUrl: sender.avatarUrl,
-        },
-        text,
-        createdAt: serverTimestamp(),
+        sender: { id: sender.id, name: sender.name, avatarUrl: sender.avatarUrl },
+        text, createdAt: serverTimestamp(),
     };
-    await db.collection('liveVideoRooms').doc(roomId).collection('messages').add(messageData);
+    await addDoc(collection(db, 'liveVideoRooms', roomId, 'messages'), messageData);
 },
 listenToRoom(roomId: string, type: 'audio' | 'video', callback: (room: LiveAudioRoom | LiveVideoRoom | null) => void) {
     const collectionName = type === 'audio' ? 'liveAudioRooms' : 'liveVideoRooms';
-    return db.collection(collectionName).doc(roomId).onSnapshot((d) => {
-        if (d.exists) {
+    return onSnapshot(doc(db, collectionName, roomId), (d) => {
+        if (d.exists()) {
             const data = d.data();
             const roomData = {
-                id: d.id,
-                ...data,
-                createdAt: data.createdAt instanceof firebase.firestore.Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString()
+                id: d.id, ...data,
+                createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString()
             };
             callback(roomData as LiveAudioRoom | LiveVideoRoom);
         } else {
@@ -1569,17 +1559,13 @@ async createLiveAudioRoom(host: User, topic: string): Promise<LiveAudioRoom> {
         host: { id: host.id, name: host.name, username: host.username, avatarUrl: host.avatarUrl },
         topic,
         speakers: [{ id: host.id, name: host.name, username: host.username, avatarUrl: host.avatarUrl }],
-        listeners: [],
-        raisedHands: [],
-        createdAt: serverTimestamp(),
-        status: 'live',
+        listeners: [], raisedHands: [], createdAt: serverTimestamp(), status: 'live',
     };
-    const docRef = await db.collection('liveAudioRooms').add(newRoomData);
-    const doc = await docRef.get();
-    const data = doc.data();
+    const docRef = await addDoc(collection(db, 'liveAudioRooms'), newRoomData);
+    const docSnap = await getDoc(docRef);
+    const data = docSnap.data();
     return {
-        id: doc.id,
-        ...data,
+        id: docSnap.id, ...data,
         createdAt: data.createdAt.toDate().toISOString(),
     } as LiveAudioRoom;
 },
@@ -1587,135 +1573,129 @@ async createLiveVideoRoom(host: User, topic: string): Promise<LiveVideoRoom> {
     const hostAsParticipant = removeUndefined({ ...host, isMuted: false, isCameraOff: false });
     const newRoomData = {
         host: { id: host.id, name: host.name, username: host.username, avatarUrl: host.avatarUrl },
-        topic,
-        participants: [hostAsParticipant],
-        createdAt: serverTimestamp(),
-        status: 'live',
+        topic, participants: [hostAsParticipant], createdAt: serverTimestamp(), status: 'live',
     };
-    const docRef = await db.collection('liveVideoRooms').add(removeUndefined(newRoomData));
-    const doc = await docRef.get();
-    const data = doc.data();
+    const docRef = await addDoc(collection(db, 'liveVideoRooms'), removeUndefined(newRoomData));
+    const docSnap = await getDoc(docRef);
+    const data = docSnap.data();
     return {
-        id: doc.id,
-        ...data,
+        id: docSnap.id, ...data,
         createdAt: data.createdAt.toDate().toISOString(),
     } as LiveVideoRoom;
 },
 async joinLiveAudioRoom(userId: string, roomId: string): Promise<void> {
     const user = await this.getUserProfileById(userId);
     if (!user) return;
-    const roomRef = db.collection('liveAudioRooms').doc(roomId);
-    await roomRef.update({
+    const roomRef = doc(db, 'liveAudioRooms', roomId);
+    await updateDoc(roomRef, {
         listeners: arrayUnion({ id: user.id, name: user.name, username: user.username, avatarUrl: user.avatarUrl }),
     });
 },
 async joinLiveVideoRoom(userId: string, roomId: string): Promise<void> {
     const user = await this.getUserProfileById(userId);
     if (!user) return;
-    const roomRef = db.collection('liveVideoRooms').doc(roomId);
+    const roomRef = doc(db, 'liveVideoRooms', roomId);
     const participantData = removeUndefined({ ...user, isMuted: false, isCameraOff: false });
-    await roomRef.update({
+    await updateDoc(roomRef, {
         participants: arrayUnion(participantData),
     });
 },
 async leaveLiveAudioRoom(userId: string, roomId: string): Promise<void> {
     const user = await this.getUserProfileById(userId);
     if (!user) return;
-    const roomRef = db.collection('liveAudioRooms').doc(roomId);
-    await roomRef.update({
+    const roomRef = doc(db, 'liveAudioRooms', roomId);
+    await updateDoc(roomRef, {
         listeners: arrayRemove({ id: user.id, name: user.name, username: user.username, avatarUrl: user.avatarUrl }),
         speakers: arrayRemove({ id: user.id, name: user.name, username: user.username, avatarUrl: user.avatarUrl }),
         raisedHands: arrayRemove(userId)
     });
 },
 async leaveLiveVideoRoom(userId: string, roomId: string): Promise<void> {
-    const user = await this.getUserProfileById(userId);
-    if (!user) return;
-    const roomRef = db.collection('liveVideoRooms').doc(roomId);
-    // This is more complex in real-time, requires a transaction to prevent race conditions.
-    const roomDoc = await roomRef.get();
-    if(roomDoc.exists) {
-        const participants = roomDoc.data().participants || [];
-        const updatedParticipants = participants.filter(p => p.id !== userId);
-        await roomRef.update({ participants: updatedParticipants });
-    }
+    const roomRef = doc(db, 'liveVideoRooms', roomId);
+    await runTransaction(db, async (transaction) => {
+        const roomDoc = await transaction.get(roomRef);
+        if(roomDoc.exists()) {
+            const participants = roomDoc.data().participants || [];
+            const updatedParticipants = participants.filter(p => p.id !== userId);
+            transaction.update(roomRef, { participants: updatedParticipants });
+        }
+    });
 },
 async endLiveAudioRoom(userId: string, roomId: string): Promise<void> {
-    const roomRef = db.collection('liveAudioRooms').doc(roomId);
-    const roomDoc = await roomRef.get();
-    if (roomDoc.exists && roomDoc.data().host.id === userId) {
-        await roomRef.update({ status: 'ended' });
+    const roomRef = doc(db, 'liveAudioRooms', roomId);
+    const roomDoc = await getDoc(roomRef);
+    if (roomDoc.exists() && roomDoc.data().host.id === userId) {
+        await updateDoc(roomRef, { status: 'ended' });
     }
 },
 async endLiveVideoRoom(userId: string, roomId: string): Promise<void> {
-    const roomRef = db.collection('liveVideoRooms').doc(roomId);
-    const roomDoc = await roomRef.get();
-    if (roomDoc.exists && roomDoc.data().host.id === userId) {
-        await roomRef.update({ status: 'ended' });
+    const roomRef = doc(db, 'liveVideoRooms', roomId);
+    const roomDoc = await getDoc(roomRef);
+    if (roomDoc.exists() && roomDoc.data().host.id === userId) {
+        await updateDoc(roomRef, { status: 'ended' });
     }
 },
 async getAudioRoomDetails(roomId: string): Promise<LiveAudioRoom | null> {
-    const doc = await db.collection('liveAudioRooms').doc(roomId).get();
-    if (doc.exists) {
-        const data = doc.data();
-        return {
-            id: doc.id,
-            ...data,
-            createdAt: data.createdAt.toDate().toISOString()
-        } as LiveAudioRoom;
+    const docSnap = await getDoc(doc(db, 'liveAudioRooms', roomId));
+    if (docSnap.exists()) {
+        const data = docSnap.data();
+        return { id: docSnap.id, ...data, createdAt: data.createdAt.toDate().toISOString() } as LiveAudioRoom;
     }
     return null;
 },
 async getRoomDetails(roomId: string, type: 'audio' | 'video'): Promise<LiveAudioRoom | LiveVideoRoom | null> {
     const collectionName = type === 'audio' ? 'liveAudioRooms' : 'liveVideoRooms';
-    const doc = await db.collection(collectionName).doc(roomId).get();
-    if (doc.exists) {
-        const data = doc.data();
+    const docSnap = await getDoc(doc(db, collectionName, roomId));
+    if (docSnap.exists()) {
+        const data = docSnap.data();
         return {
-            id: doc.id,
-            ...data,
-            createdAt: data.createdAt instanceof firebase.firestore.Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString()
+            id: docSnap.id, ...data,
+            createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString()
         } as LiveAudioRoom | LiveVideoRoom;
     }
     return null;
 },
 async raiseHandInAudioRoom(userId: string, roomId: string): Promise<void> {
-    await db.collection('liveAudioRooms').doc(roomId).update({ raisedHands: arrayUnion(userId) });
+    await updateDoc(doc(db, 'liveAudioRooms', roomId), { raisedHands: arrayUnion(userId) });
 },
 async inviteToSpeakInAudioRoom(hostId: string, userId: string, roomId: string): Promise<void> {
-    const roomRef = db.collection('liveAudioRooms').doc(roomId);
-    const roomDoc = await roomRef.get();
-    if (roomDoc.exists && roomDoc.data().host.id === hostId) {
-        const listener = roomDoc.data().listeners.find(l => l.id === userId);
-        if (listener) {
-            await roomRef.update({
-                listeners: arrayRemove(listener),
-                speakers: arrayUnion(listener),
-                raisedHands: arrayRemove(userId),
-            });
+    const roomRef = doc(db, 'liveAudioRooms', roomId);
+    await runTransaction(db, async (transaction) => {
+        const roomDoc = await transaction.get(roomRef);
+        if (roomDoc.exists() && roomDoc.data().host.id === hostId) {
+            const listener = roomDoc.data().listeners.find(l => l.id === userId);
+            if (listener) {
+                transaction.update(roomRef, {
+                    listeners: arrayRemove(listener),
+                    speakers: arrayUnion(listener),
+                    raisedHands: arrayRemove(userId),
+                });
+            }
         }
-    }
+    });
 },
 async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string): Promise<void> {
-    const roomRef = db.collection('liveAudioRooms').doc(roomId);
-    const roomDoc = await roomRef.get();
-    if (roomDoc.exists && roomDoc.data().host.id === hostId) {
-        const speaker = roomDoc.data().speakers.find(s => s.id === userId);
-        if (speaker && speaker.id !== hostId) {
-            await roomRef.update({
-                speakers: arrayRemove(speaker),
-                listeners: arrayUnion(speaker),
-            });
+    const roomRef = doc(db, 'liveAudioRooms', roomId);
+    await runTransaction(db, async (transaction) => {
+        const roomDoc = await transaction.get(roomRef);
+        if (roomDoc.exists() && roomDoc.data().host.id === hostId) {
+            const speaker = roomDoc.data().speakers.find(s => s.id === userId);
+            if (speaker && speaker.id !== hostId) {
+                transaction.update(roomRef, {
+                    speakers: arrayRemove(speaker),
+                    listeners: arrayUnion(speaker),
+                });
+            }
         }
-    }
+    });
 },
 
     async updateParticipantStateInVideoRoom(roomId: string, userId: string, updates: Partial<VideoParticipantState>): Promise<void> {
-        const roomRef = db.collection('liveVideoRooms').doc(roomId);
+        const roomRef = doc(db, 'liveVideoRooms', roomId);
         try {
-            await db.runTransaction(async (transaction) => {
+            await runTransaction(db, async (transaction) => {
                 const roomDoc = await transaction.get(roomRef);
-                if (!roomDoc.exists) throw "Room not found";
+                if (!roomDoc.exists()) throw "Room not found";
 
                 const roomData = roomDoc.data() as LiveVideoRoom;
                 const participants = roomData.participants || [];
@@ -1735,71 +1715,51 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
 
     // --- Campaigns, Stories, Groups, Admin, etc. ---
     async getCampaignsForSponsor(sponsorId: string): Promise<Campaign[]> {
-        const q = db.collection('campaigns').where('sponsorId', '==', sponsorId).orderBy('createdAt', 'desc');
-        const snapshot = await q.get();
+        const q = query(collection(db, 'campaigns'), where('sponsorId', '==', sponsorId), orderBy('createdAt', 'desc'));
+        const snapshot = await getDocs(q);
         return snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            createdAt: doc.data().createdAt instanceof firebase.firestore.Timestamp ? doc.data().createdAt.toDate().toISOString() : new Date().toISOString(),
+            id: doc.id, ...doc.data(),
+            createdAt: doc.data().createdAt instanceof Timestamp ? doc.data().createdAt.toDate().toISOString() : new Date().toISOString(),
         } as Campaign));
     },
     async submitCampaignForApproval(campaignData: Omit<Campaign, 'id'|'views'|'clicks'|'status'|'transactionId'>, transactionId: string): Promise<void> {
         const campaignToSave: Omit<Campaign, 'id'> = {
-            ...campaignData,
-            views: 0,
-            clicks: 0,
-            status: 'pending',
-            transactionId,
+            ...campaignData, views: 0, clicks: 0, status: 'pending', transactionId,
         };
-        await db.collection('campaigns').add(removeUndefined(campaignToSave));
+        await addDoc(collection(db, 'campaigns'), removeUndefined(campaignToSave));
     },
     async getRandomActiveCampaign(): Promise<Campaign | null> {
-        const q = db.collection('campaigns').where('status', '==', 'active');
-        const snapshot = await q.get();
-        if (snapshot.empty) {
-            return null;
-        }
+        const q = query(collection(db, 'campaigns'), where('status', '==', 'active'));
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) return null;
+        
         const campaigns = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            createdAt: doc.data().createdAt instanceof firebase.firestore.Timestamp ? doc.data().createdAt.toDate().toISOString() : new Date().toISOString(),
+            id: doc.id, ...doc.data(),
+            createdAt: doc.data().createdAt instanceof Timestamp ? doc.data().createdAt.toDate().toISOString() : new Date().toISOString(),
         } as Campaign));
-
         return campaigns[Math.floor(Math.random() * campaigns.length)];
     },
     async trackAdView(campaignId: string): Promise<void> {
-        const campaignRef = db.collection('campaigns').doc(campaignId);
+        const campaignRef = doc(db, 'campaigns', campaignId);
         try {
-            await campaignRef.update({
-                views: increment(1)
-            });
-        } catch (error) {
-            console.warn(`Could not track view for campaign ${campaignId}:`, error);
-        }
+            await updateDoc(campaignRef, { views: increment(1) });
+        } catch (error) { console.warn(`Could not track view for campaign ${campaignId}:`, error); }
     },
     async trackAdClick(campaignId: string): Promise<void> {
-        const campaignRef = db.collection('campaigns').doc(campaignId);
+        const campaignRef = doc(db, 'campaigns', campaignId);
         try {
-            await campaignRef.update({
-                clicks: increment(1)
-            });
-        } catch (error) {
-            console.warn(`Could not track click for campaign ${campaignId}:`, error);
-        }
+            await updateDoc(campaignRef, { clicks: increment(1) });
+        } catch (error) { console.warn(`Could not track click for campaign ${campaignId}:`, error); }
     },
     async submitLead(leadData: Omit<Lead, 'id'>): Promise<void> {
-        await db.collection('leads').add({
-            ...leadData,
-            createdAt: serverTimestamp(),
-        });
+        await addDoc(collection(db, 'leads'), { ...leadData, createdAt: serverTimestamp() });
     },
     async getLeadsForCampaign(campaignId: string): Promise<Lead[]> {
-        const q = db.collection('leads').where('campaignId', '==', campaignId).orderBy('createdAt', 'desc');
-        const snapshot = await q.get();
+        const q = query(collection(db, 'leads'), where('campaignId', '==', campaignId), orderBy('createdAt', 'desc'));
+        const snapshot = await getDocs(q);
         return snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            createdAt: doc.data().createdAt instanceof firebase.firestore.Timestamp ? doc.data().createdAt.toDate().toISOString() : doc.data().createdAt,
+            id: doc.id, ...doc.data(),
+            createdAt: doc.data().createdAt instanceof Timestamp ? doc.data().createdAt.toDate().toISOString() : doc.data().createdAt,
         } as Lead));
     },
     async getStories(currentUserId: string): Promise<{ author: User; stories: Story[]; allViewed: boolean; }[]> {
@@ -1809,23 +1769,17 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
         const friendIds = currentUser.friendIds || [];
         const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
     
-        const storiesRef = db.collection('stories');
-        const q = storiesRef.where('createdAt', '>', Timestamp.fromDate(twentyFourHoursAgo)).orderBy('createdAt', 'desc');
+        const storiesRef = collection(db, 'stories');
+        const q = query(storiesRef, where('createdAt', '>', Timestamp.fromDate(twentyFourHoursAgo)), orderBy('createdAt', 'desc'));
     
         try {
-            const snapshot = await q.get();
-            if (snapshot.empty) {
-                return [];
-            }
+            const snapshot = await getDocs(q);
+            if (snapshot.empty) return [];
     
-            const allRecentStories: Story[] = snapshot.docs.map(doc => {
-                const data = doc.data();
-                return {
-                    id: doc.id,
-                    ...data,
-                    createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate().toISOString() : data.createdAt,
-                } as Story;
-            });
+            const allRecentStories: Story[] = snapshot.docs.map(doc => ({
+                id: doc.id, ...doc.data(),
+                createdAt: doc.data().createdAt instanceof Timestamp ? doc.data().createdAt.toDate().toISOString() : doc.data().createdAt,
+            } as Story));
     
             const visibleStories = allRecentStories.filter(story => {
                 if (!story.author) return false;
@@ -1841,9 +1795,7 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
                 const authorId = story.author.id;
                 if (!storiesByAuthorMap.has(authorId)) {
                     storiesByAuthorMap.set(authorId, {
-                        author: story.author,
-                        stories: [],
-                        allViewed: true
+                        author: story.author, stories: [], allViewed: true
                     });
                 }
                 const group = storiesByAuthorMap.get(authorId)!;
@@ -1869,14 +1821,13 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
         }
     },
     async markStoryAsViewed(storyId: string, userId: string): Promise<void> {
-        await db.collection('stories').doc(storyId).update({ viewedBy: arrayUnion(userId) });
+        await updateDoc(doc(db, 'stories', storyId), { viewedBy: arrayUnion(userId) });
     },
     async createStory(storyData: Omit<Story, 'id' | 'createdAt' | 'duration' | 'contentUrl' | 'viewedBy'>, mediaFile: File | null): Promise<Story> {
         const storyToSave: any = {
             ...storyData,
             author: { id: storyData.author.id, name: storyData.author.name, avatarUrl: storyData.author.avatarUrl, username: storyData.author.username },
-            createdAt: serverTimestamp(),
-            viewedBy: [],
+            createdAt: serverTimestamp(), viewedBy: [],
         };
         let duration = 5;
         if (mediaFile) {
@@ -1885,46 +1836,43 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
             if (type === 'video') { duration = 15; }
         }
         storyToSave.duration = duration;
-        const docRef = await db.collection('stories').add(removeUndefined(storyToSave));
+        const docRef = await addDoc(collection(db, 'stories'), removeUndefined(storyToSave));
         return { id: docRef.id, ...removeUndefined(storyData), createdAt: new Date().toISOString(), duration, contentUrl: storyToSave.contentUrl, viewedBy: [] };
     },
     async getGroupById(groupId: string): Promise<Group | null> {
-        const doc = await db.collection('groups').doc(groupId).get();
-        if (doc.exists) {
-            const data = doc.data();
-            return { id: doc.id, ...data } as Group;
+        const docSnap = await getDoc(doc(db, 'groups', groupId));
+        if (docSnap.exists()) {
+            return { id: docSnap.id, ...docSnap.data() } as Group;
         }
         return null;
     },
     async getSuggestedGroups(userId: string): Promise<Group[]> { return []; },
     async createGroup(creator, name, description, coverPhotoUrl, privacy, requiresApproval, category): Promise<Group> {
         const newGroupData = { creator, name, description, coverPhotoUrl, privacy, requiresApproval, category, members: [creator], memberCount: 1, admins: [creator], moderators: [], createdAt: serverTimestamp() };
-        const docRef = await db.collection('groups').add(newGroupData);
+        const docRef = await addDoc(collection(db, 'groups'), newGroupData);
         return { id: docRef.id, ...newGroupData, createdAt: new Date().toISOString() };
     },
     async joinGroup(userId, groupId, answers): Promise<boolean> {
-        const groupRef = db.collection('groups').doc(groupId);
+        const groupRef = doc(db, 'groups', groupId);
         const user = await this.getUserProfileById(userId);
         if (!user) return false;
         const memberObject = { id: user.id, name: user.name, username: user.username, avatarUrl: user.avatarUrl };
-        await groupRef.update({ members: arrayUnion(memberObject), memberCount: increment(1) });
+        await updateDoc(groupRef, { members: arrayUnion(memberObject), memberCount: increment(1) });
         return true;
     },
     async leaveGroup(userId, groupId): Promise<boolean> {
-        const groupRef = db.collection('groups').doc(groupId);
+        const groupRef = doc(db, 'groups', groupId);
         try {
-            await db.runTransaction(async (transaction) => {
+            await runTransaction(db, async (transaction) => {
                 const groupDoc = await transaction.get(groupRef);
-                if (!groupDoc.exists) throw "Group not found";
+                if (!groupDoc.exists()) throw "Group not found";
                 const groupData = groupDoc.data() as Group;
                 const updatedMembers = groupData.members.filter(m => m.id !== userId);
                 const updatedAdmins = groupData.admins.filter(a => a.id !== userId);
                 const updatedModerators = groupData.moderators.filter(m => m.id !== userId);
 
                 transaction.update(groupRef, {
-                    members: updatedMembers,
-                    admins: updatedAdmins,
-                    moderators: updatedModerators,
+                    members: updatedMembers, admins: updatedAdmins, moderators: updatedModerators,
                     memberCount: increment(-1)
                 });
             });
@@ -1935,91 +1883,91 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
         }
     },
     async getPostsForGroup(groupId): Promise<Post[]> {
-        const q = db.collection('posts').where('groupId', '==', groupId).where('status', '==', 'approved').orderBy('createdAt', 'desc');
-        const snapshot = await q.get();
+        const q = query(collection(db, 'posts'), where('groupId', '==', groupId), where('status', '==', 'approved'), orderBy('createdAt', 'desc'));
+        const snapshot = await getDocs(q);
         return snapshot.docs.map(docToPost);
     },
     async updateGroupSettings(groupId, settings): Promise<boolean> {
-        await db.collection('groups').doc(groupId).update(removeUndefined(settings));
+        await updateDoc(doc(db, 'groups', groupId), removeUndefined(settings));
         return true;
     },
     async pinPost(groupId, postId): Promise<boolean> {
-        await db.collection('groups').doc(groupId).update({ pinnedPostId: postId });
+        await updateDoc(doc(db, 'groups', groupId), { pinnedPostId: postId });
         return true;
     },
     async unpinPost(groupId): Promise<boolean> {
-        await db.collection('groups').doc(groupId).update({ pinnedPostId: null });
+        await updateDoc(doc(db, 'groups', groupId), { pinnedPostId: null });
         return true;
     },
     async inviteFriendToGroup(groupId, friendId): Promise<boolean> {
-        await db.collection('groups').doc(groupId).update({ invitedUserIds: arrayUnion(friendId) });
+        await updateDoc(doc(db, 'groups', groupId), { invitedUserIds: arrayUnion(friendId) });
         return true;
     },
     async getGroupChat(groupId): Promise<GroupChat | null> {
-        const doc = await db.collection('groupChats').doc(groupId).get();
-        return doc.exists ? { groupId, ...doc.data() } as GroupChat : null;
+        const docSnap = await getDoc(doc(db, 'groupChats', groupId));
+        return docSnap.exists() ? { groupId, ...docSnap.data() } as GroupChat : null;
     },
     async sendGroupChatMessage(groupId, sender, text): Promise<any> {
         const message = { sender, text, createdAt: new Date().toISOString() };
-        await db.collection('groupChats').doc(groupId).update({ messages: arrayUnion(message) });
+        await updateDoc(doc(db, 'groupChats', groupId), { messages: arrayUnion(message) });
         return message;
     },
     async getGroupEvents(groupId): Promise<any[]> { return []; },
     async createGroupEvent(creator, groupId, title, description, date): Promise<any> { return null; },
     async rsvpToEvent(userId, eventId): Promise<boolean> { return true; },
     async adminLogin(email, password): Promise<AdminUser | null> {
-        const adminRef = db.collection('admins').doc(email);
-        const doc = await adminRef.get();
-        if (doc.exists && doc.data().password === password) { // NOTE: Insecure password check for demo only
-            return { id: doc.id, email: doc.id };
+        const adminRef = doc(db, 'admins', email);
+        const docSnap = await getDoc(adminRef);
+        if (docSnap.exists() && docSnap.data().password === password) { // NOTE: Insecure password check for demo only
+            return { id: docSnap.id, email: docSnap.id };
         }
         return null;
     },
     async adminRegister(email, password): Promise<AdminUser | null> {
-        const adminRef = db.collection('admins').doc(email);
-        const doc = await adminRef.get();
-        if (doc.exists) return null;
-        await adminRef.set({ password });
+        const adminRef = doc(db, 'admins', email);
+        const docSnap = await getDoc(adminRef);
+        if (docSnap.exists()) return null;
+        await setDoc(adminRef, { password });
         return { id: email, email };
     },
     async getAdminDashboardStats() { return { totalUsers: 0, newUsersToday: 0, postsLast24h: 0, pendingCampaigns: 0, activeUsersNow: 0, pendingReports: 0, pendingPayments: 0 }; },
     async getAllUsersForAdmin(): Promise<User[]> {
-        const usersSnapshot = await db.collection('users').get();
+        const usersSnapshot = await getDocs(collection(db, 'users'));
         return usersSnapshot.docs.map(docToUser);
     },
     async updateUserRole(userId, newRole): Promise<boolean> {
-        await db.collection('users').doc(userId).update({ role: newRole });
+        await updateDoc(doc(db, 'users', userId), { role: newRole });
         return true;
     },
     async getPendingCampaigns(): Promise<Campaign[]> {
-        const q = db.collection('campaigns').where('status', '==', 'pending');
-        const snapshot = await q.get();
+        const q = query(collection(db, 'campaigns'), where('status', '==', 'pending'));
+        const snapshot = await getDocs(q);
         return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Campaign));
     },
-    async approveCampaign(campaignId): Promise<void> { await db.collection('campaigns').doc(campaignId).update({ status: 'active' }); },
-    async rejectCampaign(campaignId, reason): Promise<void> { await db.collection('campaigns').doc(campaignId).update({ status: 'rejected' }); },
+    async approveCampaign(campaignId): Promise<void> { await updateDoc(doc(db, 'campaigns', campaignId), { status: 'active' }); },
+    async rejectCampaign(campaignId, reason): Promise<void> { await updateDoc(doc(db, 'campaigns', campaignId), { status: 'rejected' }); },
     async getAllPostsForAdmin(): Promise<Post[]> {
-        const q = db.collection('posts').orderBy('createdAt', 'desc');
-        const postQuery = await q.get();
+        const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'));
+        const postQuery = await getDocs(q);
         return postQuery.docs.map(docToPost);
     },
     async deletePostAsAdmin(postId): Promise<boolean> {
-        await db.collection('posts').doc(postId).delete();
+        await deleteDoc(doc(db, 'posts', postId));
         return true;
     },
     async deleteCommentAsAdmin(commentId, postId): Promise<boolean> { return true; },
     async getPostById(postId): Promise<Post | null> {
-        const doc = await db.collection('posts').doc(postId).get();
-        return doc.exists ? docToPost(doc) : null;
+        const docSnap = await getDoc(doc(db, 'posts', postId));
+        return docSnap.exists() ? docToPost(docSnap) : null;
     },
     async getPendingReports(): Promise<Report[]> { return []; },
-    async resolveReport(reportId, resolution): Promise<void> { await db.collection('reports').doc(reportId).update({ status: 'resolved', resolution }); },
+    async resolveReport(reportId, resolution): Promise<void> { await updateDoc(doc(db, 'reports', reportId), { status: 'resolved', resolution }); },
     async banUser(userId): Promise<boolean> {
-        await db.collection('users').doc(userId).update({ isBanned: true });
+        await updateDoc(doc(db, 'users', userId), { isBanned: true });
         return true;
     },
     async unbanUser(userId): Promise<boolean> {
-        await db.collection('users').doc(userId).update({ isBanned: false });
+        await updateDoc(doc(db, 'users', userId), { isBanned: false });
         return true;
     },
     async warnUser(userId, message): Promise<boolean> { return true; },
@@ -2032,50 +1980,41 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
     async getAllCampaignsForAdmin(): Promise<Campaign[]> { return []; },
     async verifyCampaignPayment(campaignId, adminId): Promise<boolean> { return true; },
     async adminUpdateUserProfilePicture(userId: string, base64: string): Promise<User | null> {
-        const userRef = db.collection('users').doc(userId);
+        const userRef = doc(db, 'users', userId);
         try {
             const blob = await fetch(base64).then(res => res.blob());
             const { url: newAvatarUrl } = await uploadMediaToCloudinary(blob, `avatar_${userId}_admin_${Date.now()}.jpeg`);
-            await userRef.update({ avatarUrl: newAvatarUrl });
-            const userDoc = await userRef.get();
-            return userDoc.exists ? docToUser(userDoc) : null;
+            await updateDoc(userRef, { avatarUrl: newAvatarUrl });
+            const userDoc = await getDoc(userRef);
+            return userDoc.exists() ? docToUser(userDoc) : null;
         } catch (error) {
             console.error("Error updating profile picture by admin:", error);
             return null;
         }
     },
     async reactivateUserAsAdmin(userId): Promise<boolean> {
-        await db.collection('users').doc(userId).update({ isDeactivated: false });
+        await updateDoc(doc(db, 'users', userId), { isDeactivated: false });
         return true;
     },
     async promoteGroupMember(groupId: string, userToPromote: User, newRole: 'Admin' | 'Moderator'): Promise<boolean> {
-        const groupRef = db.collection('groups').doc(groupId);
+        const groupRef = doc(db, 'groups', groupId);
         try {
-            await db.runTransaction(async (transaction) => {
+            await runTransaction(db, async (transaction) => {
                 const groupDoc = await transaction.get(groupRef);
-                if (!groupDoc.exists) throw "Group not found";
+                if (!groupDoc.exists()) throw "Group not found";
                 const groupData = groupDoc.data() as Group;
 
                 const userObject = {
-                    id: userToPromote.id,
-                    name: userToPromote.name,
-                    username: userToPromote.username,
-                    avatarUrl: userToPromote.avatarUrl,
+                    id: userToPromote.id, name: userToPromote.name, username: userToPromote.username, avatarUrl: userToPromote.avatarUrl,
                 };
                 
                 const updatedAdmins = groupData.admins.filter(a => a.id !== userToPromote.id);
                 const updatedModerators = groupData.moderators.filter(m => m.id !== userToPromote.id);
 
-                if (newRole === 'Admin') {
-                    updatedAdmins.push(userObject);
-                } else { // Moderator
-                    updatedModerators.push(userObject);
-                }
+                if (newRole === 'Admin') updatedAdmins.push(userObject);
+                else updatedModerators.push(userObject);
 
-                transaction.update(groupRef, {
-                    admins: updatedAdmins,
-                    moderators: updatedModerators,
-                });
+                transaction.update(groupRef, { admins: updatedAdmins, moderators: updatedModerators });
             });
             return true;
         } catch (error) {
@@ -2084,17 +2023,17 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
         }
     },
     async demoteGroupMember(groupId: string, userToDemote: User, oldRole: 'Admin' | 'Moderator'): Promise<boolean> {
-        const groupRef = db.collection('groups').doc(groupId);
+        const groupRef = doc(db, 'groups', groupId);
         try {
-            await db.runTransaction(async (transaction) => {
+            await runTransaction(db, async (transaction) => {
                 const groupDoc = await transaction.get(groupRef);
-                if (!groupDoc.exists) throw "Group not found";
+                if (!groupDoc.exists()) throw "Group not found";
                 const groupData = groupDoc.data() as Group;
 
                 if (oldRole === 'Admin') {
                     const updatedAdmins = groupData.admins.filter(a => a.id !== userToDemote.id);
                     transaction.update(groupRef, { admins: updatedAdmins });
-                } else { // Moderator
+                } else {
                     const updatedModerators = groupData.moderators.filter(m => m.id !== userToDemote.id);
                     transaction.update(groupRef, { moderators: updatedModerators });
                 }
@@ -2106,11 +2045,11 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
         }
     },
     async removeGroupMember(groupId: string, userToRemove: User): Promise<boolean> {
-        const groupRef = db.collection('groups').doc(groupId);
+        const groupRef = doc(db, 'groups', groupId);
         try {
-            await db.runTransaction(async (transaction) => {
+            await runTransaction(db, async (transaction) => {
                 const groupDoc = await transaction.get(groupRef);
-                if (!groupDoc.exists) throw "Group not found";
+                if (!groupDoc.exists()) throw "Group not found";
                 const groupData = groupDoc.data() as Group;
                 
                 const isAlreadyMember = groupData.members.some(m => m.id === userToRemove.id);
@@ -2121,9 +2060,7 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
                 const updatedModerators = groupData.moderators.filter(m => m.id !== userToRemove.id);
 
                 transaction.update(groupRef, {
-                    members: updatedMembers,
-                    admins: updatedAdmins,
-                    moderators: updatedModerators,
+                    members: updatedMembers, admins: updatedAdmins, moderators: updatedModerators,
                     memberCount: memberCountChange
                 });
             });
@@ -2134,11 +2071,11 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
         }
     },
     async approveJoinRequest(groupId: string, userId: string): Promise<boolean> {
-        const groupRef = db.collection('groups').doc(groupId);
+        const groupRef = doc(db, 'groups', groupId);
         try {
-            await db.runTransaction(async (transaction) => {
+            await runTransaction(db, async (transaction) => {
                 const groupDoc = await transaction.get(groupRef);
-                if (!groupDoc.exists) throw "Group not found";
+                if (!groupDoc.exists()) throw "Group not found";
                 
                 const groupData = groupDoc.data() as Group;
                 const joinRequests = groupData.joinRequests || [];
@@ -2150,16 +2087,11 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
                 const updatedRequests = joinRequests.filter(r => r.user.id !== userId);
                 
                 const memberObject = {
-                    id: userToApprove.id,
-                    name: userToApprove.name,
-                    username: userToApprove.username,
-                    avatarUrl: userToApprove.avatarUrl,
+                    id: userToApprove.id, name: userToApprove.name, username: userToApprove.username, avatarUrl: userToApprove.avatarUrl,
                 };
 
                 transaction.update(groupRef, {
-                    joinRequests: updatedRequests,
-                    members: arrayUnion(memberObject),
-                    memberCount: increment(1)
+                    joinRequests: updatedRequests, members: arrayUnion(memberObject), memberCount: increment(1)
                 });
             });
             return true;
@@ -2169,11 +2101,11 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
         }
     },
     async rejectJoinRequest(groupId: string, userId: string): Promise<boolean> {
-        const groupRef = db.collection('groups').doc(groupId);
+        const groupRef = doc(db, 'groups', groupId);
         try {
-            await db.runTransaction(async (transaction) => {
+            await runTransaction(db, async (transaction) => {
                 const groupDoc = await transaction.get(groupRef);
-                if (!groupDoc.exists) throw "Group not found";
+                if (!groupDoc.exists()) throw "Group not found";
 
                 const groupData = groupDoc.data() as Group;
                 const updatedRequests = (groupData.joinRequests || []).filter(r => r.user.id !== userId);
@@ -2187,18 +2119,18 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
         }
     },
     async approvePost(postId: string): Promise<boolean> {
-        const postRef = db.collection('posts').doc(postId);
+        const postRef = doc(db, 'posts', postId);
         try {
-            await postRef.update({ status: 'approved' });
-            const postDoc = await postRef.get();
-            if (postDoc.exists && postDoc.data().groupId) {
+            await updateDoc(postRef, { status: 'approved' });
+            const postDoc = await getDoc(postRef);
+            if (postDoc.exists() && postDoc.data().groupId) {
                 const groupId = postDoc.data().groupId;
-                const groupRef = db.collection('groups').doc(groupId);
-                const groupDoc = await groupRef.get();
-                if (groupDoc.exists) {
+                const groupRef = doc(db, 'groups', groupId);
+                const groupDoc = await getDoc(groupRef);
+                if (groupDoc.exists()) {
                     const groupData = groupDoc.data() as Group;
                     const updatedPendingPosts = (groupData.pendingPosts || []).filter(p => p.id !== postId);
-                    await groupRef.update({ pendingPosts: updatedPendingPosts });
+                    await updateDoc(groupRef, { pendingPosts: updatedPendingPosts });
                 }
             }
             return true;
@@ -2208,20 +2140,20 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
         }
     },
     async rejectPost(postId: string): Promise<boolean> {
-        const postRef = db.collection('posts').doc(postId);
+        const postRef = doc(db, 'posts', postId);
         try {
-            const postDoc = await postRef.get();
-            if (postDoc.exists && postDoc.data().groupId) {
+            const postDoc = await getDoc(postRef);
+            if (postDoc.exists() && postDoc.data().groupId) {
                 const groupId = postDoc.data().groupId;
-                const groupRef = db.collection('groups').doc(groupId);
-                const groupDoc = await groupRef.get();
-                if (groupDoc.exists) {
+                const groupRef = doc(db, 'groups', groupId);
+                const groupDoc = await getDoc(groupRef);
+                if (groupDoc.exists()) {
                     const groupData = groupDoc.data() as Group;
                     const updatedPendingPosts = (groupData.pendingPosts || []).filter(p => p.id !== postId);
-                    await groupRef.update({ pendingPosts: updatedPendingPosts });
+                    await updateDoc(groupRef, { pendingPosts: updatedPendingPosts });
                 }
             }
-            await postRef.delete();
+            await deleteDoc(postRef);
             return true;
         } catch (error) {
             console.error(`Failed to reject/delete post ${postId}:`, error);
@@ -2232,8 +2164,8 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
     // --- Ads & Monetization ---
     async getInjectableAd(user: User): Promise<Post | null> {
         try {
-            const q = db.collection('campaigns').where('status', '==', 'active').where('adType', '==', 'feed');
-            const snapshot = await q.get();
+            const q = query(collection(db, 'campaigns'), where('status', '==', 'active'), where('adType', '==', 'feed'));
+            const snapshot = await getDocs(q);
             if (snapshot.empty) return null;
             
             const allCampaigns = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Campaign));
@@ -2273,8 +2205,8 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
 
     async getInjectableStoryAd(user: User): Promise<Story | null> {
         try {
-            const q = db.collection('campaigns').where('status', '==', 'active').where('adType', '==', 'story');
-            const snapshot = await q.get();
+            const q = query(collection(db, 'campaigns'), where('status', '==', 'active'), where('adType', '==', 'story'));
+            const snapshot = await getDocs(q);
             if (snapshot.empty) return null;
 
             const allCampaigns = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Campaign));
