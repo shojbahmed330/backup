@@ -299,7 +299,7 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
             <img src={peerUser.avatarUrl} alt={peerUser.name} className="w-9 h-9 rounded-full" />
             <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border border-slate-700 ${peerUser.onlineStatus === 'online' ? 'bg-green-500' : 'bg-slate-500'}`}/>
           </div>
-          <span className="text-white font-semibold">{peerUser.name}</span>
+          <span onClick={(e) => { e.stopPropagation(); onNavigate(AppView.PROFILE, { username: peerUser.username }); }} className="text-white font-semibold hover:underline">{peerUser.name}</span>
         </button>
         <div className="flex items-center text-fuchsia-400">
           <button onClick={() => handleInitiateCall('audio')} className="p-2 rounded-full hover:bg-slate-700/50"><Icon name="phone" className="w-5 h-5"/></button>
