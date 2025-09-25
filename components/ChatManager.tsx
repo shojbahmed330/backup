@@ -14,6 +14,7 @@ interface ChatManagerProps {
   setIsChatRecording: (isRecording: boolean) => void;
   onNavigate: (view: AppView, props?: any) => void;
   onSetTtsMessage: (message: string) => void;
+  onBlockUser: (user: User) => void;
 }
 
 const ChatManager: React.FC<ChatManagerProps> = ({
@@ -27,6 +28,7 @@ const ChatManager: React.FC<ChatManagerProps> = ({
   setIsChatRecording,
   onNavigate,
   onSetTtsMessage,
+  onBlockUser,
 }) => {
   const friendsMap = useMemo(() => {
     const map = new Map<string, User>();
@@ -62,6 +64,7 @@ const ChatManager: React.FC<ChatManagerProps> = ({
             setIsChatRecording={setIsChatRecording}
             onNavigate={onNavigate}
             onSetTtsMessage={onSetTtsMessage}
+            onBlockUser={onBlockUser}
           />
         ))}
         {openChats.map(peer => (
@@ -77,6 +80,7 @@ const ChatManager: React.FC<ChatManagerProps> = ({
             setIsChatRecording={setIsChatRecording}
             onNavigate={onNavigate}
             onSetTtsMessage={onSetTtsMessage}
+            onBlockUser={onBlockUser}
           />
         ))}
       </div>
@@ -95,6 +99,7 @@ const ChatManager: React.FC<ChatManagerProps> = ({
                 setIsChatRecording={setIsChatRecording}
                 onNavigate={onNavigate}
                 onSetTtsMessage={onSetTtsMessage}
+                onBlockUser={onBlockUser}
             />
          ))}
       </div>

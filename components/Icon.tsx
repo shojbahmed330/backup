@@ -2,7 +2,7 @@
 
 import React from 'react';
 
-type IconName = 'mic' | 'like' | 'comment' | 'share' | 'play' | 'pause' | 'logo' | 'back' | 'settings' | 'add-friend' | 'message' | 'edit' | 'bell' | 'briefcase' | 'academic-cap' | 'home' | 'map-pin' | 'user-slash' | 'globe' | 'users' | 'lock-closed' | 'ellipsis-vertical' | 'trash' | 'speaker-wave' | 'swatch' | 'coin' | 'chat-bubble-group' | 'video-camera' | 'video-camera-slash' | 'microphone-slash' | 'close' | 'add-circle' | 'paper-airplane' | 'home-solid' | 'users-group-solid' | 'photo' | 'compass' | 'film' | 'link' | 'facebook' | 'twitter' | 'whatsapp' | 'phone' | 'face-smile' | 'reply' | 'dots-horizontal';
+type IconName = 'mic' | 'like' | 'comment' | 'share' | 'play' | 'pause' | 'logo' | 'back' | 'settings' | 'add-friend' | 'message' | 'edit' | 'bell' | 'briefcase' | 'academic-cap' | 'home' | 'map-pin' | 'user-slash' | 'globe' | 'users' | 'lock-closed' | 'ellipsis-vertical' | 'trash' | 'speaker-wave' | 'swatch' | 'coin' | 'chat-bubble-group' | 'video-camera' | 'video-camera-slash' | 'microphone-slash' | 'close' | 'add-circle' | 'paper-airplane' | 'home-solid' | 'users-group-solid' | 'photo' | 'compass' | 'film' | 'link' | 'facebook' | 'twitter' | 'whatsapp' | 'phone' | 'face-smile' | 'reply' | 'dots-horizontal' | 'user' | 'check' | 'check-double';
 
 interface IconProps {
   name: IconName;
@@ -256,6 +256,22 @@ const ICONS: Record<IconName, React.ReactNode> = {
   'dots-horizontal': (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" />
+    </svg>
+  ),
+  user: (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+    </svg>
+  ),
+  check: (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+    </svg>
+  ),
+  'check-double': (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
     </svg>
   ),
 };

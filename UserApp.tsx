@@ -1179,6 +1179,7 @@ const UserApp: React.FC = () => {
             setIsChatRecording={setIsChatRecording}
             onNavigate={navigate}
             onSetTtsMessage={setTtsMessage}
+            onBlockUser={handleBlockUser}
           />
       )}
       
