@@ -24,6 +24,31 @@ enum RecordingState { IDLE, RECORDING, PREVIEW }
 const EMOJI_REACTIONS = ['❤️', '😂', '😮', '😢', '😡', '👍'];
 const EMOJI_REGEX = /(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])/g;
 
+// A curated list of stylish, animated emojis from a reliable CDN
+const ANIMATED_EMOJIS = [
+    { name: 'Blob Hearts', url: 'https://cdn.emoji.gg/emojis/4608-blob-hearts.gif' },
+    { name: 'Blob Cry', url: 'https://cdn.emoji.gg/emojis/8720-blobeyescry.gif' },
+    { name: 'Blob Dance', url: 'https://cdn.emoji.gg/emojis/6896-blobdance.gif' },
+    { name: 'Blob Thumbs Up', url: 'https://cdn.emoji.gg/emojis/7926-blobthumbsup.gif' },
+    { name: 'Blob Laugh', url: 'https://cdn.emoji.gg/emojis/7524-bloblul.gif' },
+    { name: 'Blob Think', url: 'https://cdn.emoji.gg/emojis/5299-blobthink.gif' },
+    { name: 'Blob Flushed', url: 'https://cdn.emoji.gg/emojis/9944-blobflushed.gif' },
+    { name: 'Blob Angry', url: 'https://cdn.emoji.gg/emojis/4612-blobross.gif' },
+    { name: 'Party Blob', url: 'https://cdn.emoji.gg/emojis/1395-party-blob.gif' },
+    { name: 'Cat Jam', url: 'https://cdn.emoji.gg/emojis/3643-catjam.gif' },
+    { name: 'Pepe Dance', url: 'https://cdn.emoji.gg/emojis/1939-peped.gif' },
+    { name: 'Pepe Hands', url: 'https://cdn.emoji.gg/emojis/4763-pepehands.gif' },
+    { name: 'Pepe Yes', url: 'https://cdn.emoji.gg/emojis/1984-pepeyes.gif' },
+    { name: 'Heart GIF', url: 'https://cdn.emoji.gg/emojis/4093-heart-gif.gif' },
+    { name: 'Fire', url: 'https://cdn.emoji.gg/emojis/9749-fire.gif' },
+    { name: 'Popcorn', url: 'https://cdn.emoji.gg/emojis/9920-popcorn.gif' },
+    { name: 'Love', url: 'https://cdn.emoji.gg/emojis/5604-love.gif' },
+    { name: 'Like', url: 'https://cdn.emoji.gg/emojis/6232-like.gif' },
+    { name: 'Cool', url: 'https://cdn.emoji.gg/emojis/2696-cool.gif' },
+    { name: 'Vibing', url: 'https://cdn.emoji.gg/emojis/6948-vibing.gif' },
+];
+
+
 const isJumboEmoji = (text: string | undefined): boolean => {
     if (!text) return false;
     const trimmedText = text.trim();
@@ -180,6 +205,7 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
   
   const [settings, setSettings] = useState<ChatSettings>({ theme: 'default' });
   const [isThemePickerOpen, setThemePickerOpen] = useState(false);
+  const [isEmojiPickerOpen, setEmojiPickerOpen] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const mediaInputRef = useRef<HTMLInputElement>(null);
@@ -219,10 +245,10 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
     }
   }, [messages, isMinimized, chatId, currentUser.id]);
   
-  const handleSendMessage = async (e?: React.FormEvent) => {
+  const handleSendTextMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
     const trimmedMessage = newMessage.trim();
-    if (!trimmedMessage && !audioPreview) return;
+    if (!trimmedMessage) return;
     
     if (trimmedMessage === '❤️') {
         setShowHeartAnimation(true);
@@ -232,24 +258,26 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
     const replyToInfo = replyingTo ? geminiService.createReplySnippet(replyingTo) : undefined;
     let messageContent: any = { type: 'text', text: trimmedMessage, replyTo: replyToInfo };
 
-    if (audioPreview) {
-        messageContent = { type: 'audio', audioBlob: audioPreview.blob, duration: audioPreview.duration, replyTo: replyToInfo };
-    }
-
     await firebaseService.sendMessage(chatId, currentUser, peerUser, messageContent);
     setNewMessage('');
     setReplyingTo(null);
+  };
+  
+  const handleSendMediaMessage = async (mediaContent: { type: 'image' | 'video' | 'audio', mediaFile?: File, audioBlob?: Blob, mediaUrl?: string, duration?: number }) => {
+    const replyToInfo = replyingTo ? geminiService.createReplySnippet(replyingTo) : undefined;
+    await firebaseService.sendMessage(chatId, currentUser, peerUser, { ...mediaContent, replyTo: replyToInfo });
+    setReplyingTo(null);
     setAudioPreview(null);
     setRecordingState(RecordingState.IDLE);
+    setNewMessage(''); // Clear text field too
   };
+
   
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      const replyToInfo = replyingTo ? geminiService.createReplySnippet(replyingTo) : undefined;
       const type = file.type.startsWith('video') ? 'video' : 'image';
-      await firebaseService.sendMessage(chatId, currentUser, peerUser, { type, mediaFile: file, replyTo: replyToInfo });
-      setReplyingTo(null);
+      await handleSendMediaMessage({ type, mediaFile: file });
       e.target.value = '';
   };
 
@@ -317,7 +345,7 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
 
   return (
     <div className={`fixed md:relative bottom-0 left-0 right-0 h-full md:w-80 md:h-[500px] bg-gradient-to-br ${activeTheme.bgGradient} md:rounded-t-lg flex flex-col shadow-2xl border border-b-0 border-slate-700 font-sans`} style={{ backgroundSize: '400% 400%', animation: 'gradient-animation 25s ease infinite' }}>
-      <header className="relative flex-shrink-0 flex items-center justify-between p-2 bg-black/20 backdrop-blur-sm md:rounded-t-lg border-b border-white/10">
+      <header className="relative flex-shrink-0 flex items-center justify-between p-2 bg-black/20 backdrop-blur-sm md:rounded-t-lg border-b border-white/10 z-10">
         <button onClick={() => onHeaderClick(peerUser.id)} className={`flex items-center gap-2 p-1 rounded-lg hover:bg-black/20`}>
           <div className="relative">
             <img src={peerUser.avatarUrl} alt={peerUser.name} className="w-9 h-9 rounded-full" />
@@ -354,6 +382,17 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
         <div ref={messagesEndRef} />
       </main>
       <footer className="p-2 border-t border-white/10 bg-black/20">
+        {isEmojiPickerOpen && (
+            <div className="h-48 overflow-y-auto p-2 bg-slate-800/80 rounded-lg mb-2 no-scrollbar">
+                <div className="grid grid-cols-5 gap-2">
+                    {ANIMATED_EMOJIS.map(emoji => (
+                        <button key={emoji.name} onClick={() => { handleSendMediaMessage({ type: 'image', mediaUrl: emoji.url }); setEmojiPickerOpen(false); }} className="p-1 aspect-square flex items-center justify-center hover:bg-slate-700/50 rounded-md">
+                            <img src={emoji.url} alt={emoji.name} className="w-10 h-10" />
+                        </button>
+                    ))}
+                </div>
+            </div>
+        )}
         {replyingTo && <div className="text-xs text-slate-400 px-2 pb-1 flex justify-between items-center bg-slate-700/50 rounded-t-md -mx-2 -mt-2 mb-2 p-2"><span>Replying to {replyingTo.senderId === currentUser.id ? 'yourself' : peerUser.name}</span><button onClick={() => setReplyingTo(null)} className="font-bold"><Icon name="close" className="w-4 h-4" /></button></div>}
         <div className="flex items-center gap-2">
           <input type="file" ref={mediaInputRef} onChange={handleFileChange} accept="image/*,video/*" className="hidden"/>
@@ -362,9 +401,9 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
           <div className="flex-grow">
             {recordingState === RecordingState.RECORDING ? (<div className="bg-slate-700 rounded-full h-10 flex items-center px-4 justify-between"><div className="w-1/2 h-full"><Waveform isPlaying={true} isRecording /></div><button onClick={handleStopRecording} className="bg-rose-500 rounded-full p-2"><Icon name="pause" className="w-4 h-4 text-white"/></button></div>
             ) : audioPreview ? (<div className="bg-slate-700 rounded-full h-10 flex items-center px-4 justify-between"><p className="text-sm text-slate-300">Voice message ({audioPreview.duration}s)</p><button onClick={handleCancelRecording} className="p-1"><Icon name="close" className="w-4 h-4 text-slate-400"/></button></div>
-            ) : (<div className="relative"><textarea value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && !e.shiftKey) handleSendMessage(e); }} placeholder="Aa" rows={1} className={`w-full bg-slate-700 rounded-full py-2 px-4 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm resize-none pr-10 ${activeTheme.text}`} /></div>)}
+            ) : (<div className="relative"><textarea value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && !e.shiftKey) handleSendTextMessage(e); }} placeholder="Aa" rows={1} className={`w-full bg-slate-700 rounded-full py-2 px-4 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm resize-none pr-10 ${activeTheme.text}`} /><button type="button" onClick={() => setEmojiPickerOpen(p => !p)} className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-slate-300 hover:text-white"><Icon name="face-smile" className="w-5 h-5"/></button></div>)}
           </div>
-          <button type="button" onClick={() => handleSendMessage()} className="p-2 rounded-full text-fuchsia-400 hover:bg-slate-700/50" disabled={!newMessage.trim() && !audioPreview}><Icon name="paper-airplane" className="w-6 h-6" /></button>
+          <button type="button" onClick={audioPreview ? () => handleSendMediaMessage({ type: 'audio', audioBlob: audioPreview.blob, duration: audioPreview.duration }) : handleSendTextMessage} className="p-2 rounded-full text-fuchsia-400 hover:bg-slate-700/50" disabled={!newMessage.trim() && !audioPreview}><Icon name="paper-airplane" className="w-6 h-6" /></button>
         </div>
       </footer>
     </div>
