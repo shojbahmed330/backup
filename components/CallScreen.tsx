@@ -112,6 +112,9 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
             client.on('user-published', async (user, mediaType) => {
                 await client.subscribe(user, mediaType);
                 setRemoteUser(user);
+                if (mediaType === 'audio') {
+                    user.audioTrack?.play();
+                }
             });
 
             client.on('user-left', () => {
