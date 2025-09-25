@@ -343,9 +343,20 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
     );
   }
 
+  const backgroundClass = activeTheme.bgClass || `bg-gradient-to-br ${activeTheme.bgGradient}`;
+
   return (
-    <div className={`fixed md:relative bottom-0 left-0 right-0 h-full md:w-80 md:h-[500px] bg-gradient-to-br ${activeTheme.bgGradient} md:rounded-t-lg flex flex-col shadow-2xl border border-b-0 border-slate-700 font-sans`} style={{ backgroundSize: '400% 400%', animation: 'gradient-animation 25s ease infinite' }}>
-      <header className="relative flex-shrink-0 flex items-center justify-between p-2 bg-black/20 backdrop-blur-sm md:rounded-t-lg border-b border-white/10 z-10">
+    <div className={`fixed md:relative bottom-0 left-0 right-0 h-full md:w-80 md:h-[500px] ${backgroundClass} md:rounded-t-lg flex flex-col shadow-2xl border border-b-0 border-slate-700 font-sans`}>
+        {isThemePickerOpen && (
+              <div className="absolute top-14 right-2 mt-1 w-64 bg-slate-800/90 backdrop-blur-md border border-slate-600 rounded-lg shadow-2xl z-30 p-2 animate-fade-in-fast">
+                  <div className="grid grid-cols-5 gap-2">
+                      {Object.entries(CHAT_THEMES).map(([key, theme]) => (
+                          <button key={key} title={theme.name} onClick={() => handleThemeChange(key as ChatTheme)} className={`w-10 h-10 rounded-full ${theme.bgClass || `bg-gradient-to-br ${theme.bgGradient}`} ring-2 ${settings.theme === key ? 'ring-white' : 'ring-transparent'}`}></button>
+                      ))}
+                  </div>
+              </div>
+          )}
+      <header className="relative flex-shrink-0 flex items-center justify-between p-2 bg-black/20 backdrop-blur-sm md:rounded-t-lg border-b border-white/10 z-20">
         <button onClick={() => onHeaderClick(peerUser.id)} className={`flex items-center gap-2 p-1 rounded-lg hover:bg-black/20`}>
           <div className="relative">
             <img src={peerUser.avatarUrl} alt={peerUser.name} className="w-9 h-9 rounded-full" />
@@ -364,24 +375,15 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
             <Icon name="close" className="w-5 h-5" />
           </button>
         </div>
-         {isThemePickerOpen && (
-              <div className="absolute top-full right-0 mt-1 w-64 bg-slate-800/90 backdrop-blur-md border border-slate-600 rounded-lg shadow-2xl z-30 p-2">
-                  <div className="grid grid-cols-5 gap-2">
-                      {Object.entries(CHAT_THEMES).map(([key, theme]) => (
-                          <button key={key} title={theme.name} onClick={() => handleThemeChange(key as ChatTheme)} className={`w-10 h-10 rounded-full bg-gradient-to-br ${theme.bgGradient} ring-2 ${settings.theme === key ? 'ring-white' : 'ring-transparent'}`}></button>
-                      ))}
-                  </div>
-              </div>
-          )}
       </header>
-      <main className="relative flex-grow overflow-y-auto p-3 space-y-2 flex flex-col">
+      <main className="relative flex-grow overflow-y-auto p-3 space-y-2 flex flex-col z-10">
         {showHeartAnimation && <div className="heart-animation-container">{Array.from({ length: 10 }).map((_, i) => (<div key={i} className="heart" style={{ left: `${Math.random() * 80 + 10}%`, animationDelay: `${Math.random() * 1.5}s`, fontSize: `${Math.random() * 1.5 + 1}rem`}}>❤️</div>))}</div>}
         {messages.map((msg) => (
             <MessageBubble key={msg.id} message={msg} isMe={msg.senderId === currentUser.id} peerUser={peerUser} currentUser={currentUser} theme={activeTheme} onReply={setReplyingTo} onReact={handleReact} onUnsend={handleUnsend} onViewProfile={(u) => onNavigate(AppView.PROFILE, { username: u })} onBlockUser={(u) => { onBlockUser(u); onClose(u.id); }} onAudioCall={() => handleInitiateCall('audio')} onVideoCall={() => handleInitiateCall('video')} />
         ))}
         <div ref={messagesEndRef} />
       </main>
-      <footer className="p-2 border-t border-white/10 bg-black/20">
+      <footer className="p-2 border-t border-white/10 bg-black/20 backdrop-blur-sm z-20">
         {isEmojiPickerOpen && (
             <div className="h-48 overflow-y-auto p-2 bg-slate-800/80 rounded-lg mb-2 no-scrollbar">
                 <div className="grid grid-cols-5 gap-2">

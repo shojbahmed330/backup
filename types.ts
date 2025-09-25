@@ -33,7 +33,7 @@ export enum FriendshipStatus {
   FRIENDS
 }
 
-export type ChatTheme = 'default' | 'sunset' | 'ocean' | 'forest' | 'classic' | 'galaxy' | 'midnight' | 'rose-gold' | 'neon' | 'minty';
+export type ChatTheme = 'default' | 'sunset' | 'classic' | 'aurora' | 'golden-hour' | 'cyberpunk' | 'emerald-sea' | 'starlight';
 export type GroupCategory = 'General' | 'Food' | 'Gaming' | 'Music' | 'Technology' | 'Travel' | 'Art & Culture' | 'Sports';
 export type GroupRole = 'Admin' | 'Moderator' | 'Top Contributor';
 export type StoryPrivacy = 'public' | 'friends';

@@ -45,7 +45,7 @@ export const VOICE_EMOJI_MAP: Record<string, string> = {
     inlove: '😍',
 };
 
-export const CHAT_THEMES: Record<ChatTheme, { name: string, bgGradient: string; myBubble: string; theirBubble: string; text: string; headerText: string; }> = {
+export const CHAT_THEMES: Record<ChatTheme, { name: string, bgGradient?: string; bgClass?: string; myBubble: string; theirBubble: string; text: string; headerText: string; }> = {
     default: {
         name: 'Default',
         bgGradient: 'from-[#18191a] to-[#242526]',
@@ -54,29 +54,45 @@ export const CHAT_THEMES: Record<ChatTheme, { name: string, bgGradient: string; 
         text: 'text-white',
         headerText: 'text-slate-100',
     },
-    sunset: {
-        name: 'Sunset',
-        bgGradient: 'from-orange-700 via-rose-700 to-indigo-800',
-        myBubble: 'bg-indigo-500',
-        theirBubble: 'bg-rose-500/80 backdrop-blur-sm',
+    aurora: {
+        name: 'Aurora',
+        bgClass: 'bg-aurora animate-gradient',
+        myBubble: 'bg-fuchsia-500/60 backdrop-blur-sm border border-white/20',
+        theirBubble: 'bg-sky-500/60 backdrop-blur-sm border border-white/20',
         text: 'text-white',
+        headerText: 'text-fuchsia-300',
+    },
+    'golden-hour': {
+        name: 'Golden Hour',
+        bgClass: 'bg-golden-hour animate-gradient',
+        myBubble: 'bg-white/80 backdrop-blur-sm',
+        theirBubble: 'bg-rose-200/80 backdrop-blur-sm',
+        text: 'text-rose-900',
         headerText: 'text-white',
     },
-    ocean: {
-        name: 'Ocean',
-        bgGradient: 'from-cyan-800 to-blue-800',
-        myBubble: 'bg-teal-600',
-        theirBubble: 'bg-sky-700/80 backdrop-blur-sm',
+    cyberpunk: {
+        name: 'Cyberpunk',
+        bgClass: 'bg-cyberpunk animate-gradient',
+        myBubble: 'bg-transparent border-2 border-cyan-400',
+        theirBubble: 'bg-transparent border-2 border-fuchsia-400',
+        text: 'text-white',
+        headerText: 'text-cyan-300',
+    },
+    'emerald-sea': {
+        name: 'Emerald Sea',
+        bgClass: 'bg-emerald-sea animate-gradient',
+        myBubble: 'bg-teal-600/70 backdrop-blur-sm',
+        theirBubble: 'bg-sky-700/70 backdrop-blur-sm',
         text: 'text-white',
         headerText: 'text-cyan-100',
     },
-    forest: {
-        name: 'Forest',
-        bgGradient: 'from-emerald-800 to-green-800',
-        myBubble: 'bg-lime-700',
-        theirBubble: 'bg-emerald-700/80 backdrop-blur-sm',
+    starlight: {
+        name: 'Starlight',
+        bgGradient: 'from-black via-indigo-900 to-black',
+        myBubble: 'bg-purple-600/80 backdrop-blur-sm border border-purple-400/30',
+        theirBubble: 'bg-slate-700/80 backdrop-blur-sm border border-slate-500/30',
         text: 'text-white',
-        headerText: 'text-green-100',
+        headerText: 'text-purple-300',
     },
     classic: {
         name: 'Classic',
@@ -86,46 +102,14 @@ export const CHAT_THEMES: Record<ChatTheme, { name: string, bgGradient: string; 
         text: 'text-black',
         headerText: 'text-gray-800',
     },
-    galaxy: {
-        name: 'Galaxy',
-        bgGradient: 'bg-transparent',
-        myBubble: 'bg-fuchsia-500/50 backdrop-blur-sm border border-white/20',
-        theirBubble: 'bg-sky-500/50 backdrop-blur-sm border border-white/20',
+    sunset: {
+        name: 'Sunset',
+        bgGradient: 'from-orange-700 via-rose-700 to-indigo-800',
+        myBubble: 'bg-indigo-500/90 backdrop-blur-sm',
+        theirBubble: 'bg-rose-500/80 backdrop-blur-sm',
         text: 'text-white',
-        headerText: 'text-fuchsia-300',
-    },
-    midnight: {
-        name: 'Midnight',
-        bgGradient: 'from-black via-indigo-900 to-black',
-        myBubble: 'bg-purple-600',
-        theirBubble: 'bg-slate-700',
-        text: 'text-white',
-        headerText: 'text-purple-300',
-    },
-    'rose-gold': {
-        name: 'Rose Gold',
-        bgGradient: 'from-pink-400 via-rose-400 to-orange-300',
-        myBubble: 'bg-white/80 backdrop-blur-sm',
-        theirBubble: 'bg-rose-200/80 backdrop-blur-sm',
-        text: 'text-rose-900',
         headerText: 'text-white',
     },
-    neon: {
-        name: 'Neon',
-        bgGradient: 'from-gray-900 to-black',
-        myBubble: 'bg-transparent border-2 border-cyan-400',
-        theirBubble: 'bg-transparent border-2 border-fuchsia-400',
-        text: 'text-white',
-        headerText: 'text-cyan-300',
-    },
-    minty: {
-        name: 'Minty Fresh',
-        bgGradient: 'from-green-200 to-teal-300',
-        myBubble: 'bg-white',
-        theirBubble: 'bg-teal-100',
-        text: 'text-black',
-        headerText: 'text-teal-800',
-    }
 };
 
 export const DEFAULT_AVATARS: string[] = [

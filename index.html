@@ -103,6 +103,32 @@
         font-size: 2rem;
         animation: float-heart 2.5s ease-out forwards;
       }
+
+      /* Animated Theme Backgrounds */
+      @keyframes animated-gradient {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+      }
+      .bg-aurora {
+        background: linear-gradient(-45deg, #0f0c29, #302b63, #24243e, #004e92, #1cb5e0);
+        background-size: 400% 400%;
+      }
+      .bg-golden-hour {
+        background: linear-gradient(-45deg, #ff9a9e, #fad0c4, #fad0c4, #ffd1ff);
+        background-size: 400% 400%;
+      }
+      .bg-cyberpunk {
+        background: linear-gradient(120deg, #0f0c29, #2c3e50, #fd746c);
+        background-size: 400% 400%;
+      }
+      .bg-emerald-sea {
+        background: linear-gradient(to right, #0099f7, #f11712);
+        background-size: 400% 400%;
+      }
+      .animate-gradient {
+        animation: animated-gradient 20s ease infinite;
+      }
     </style>
     
   <script type="importmap">
