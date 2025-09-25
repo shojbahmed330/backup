@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, initializeAuth, browserSessionPersistence } from 'firebase/auth';
+import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
@@ -17,11 +17,8 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Use browserSessionPersistence for Auth. This is more reliable in some sandboxed environments.
-const auth = initializeAuth(app, {
-  persistence: browserSessionPersistence
-});
-
+// Use the standard getAuth() to ensure a singleton instance is shared across the app.
+const auth = getAuth(app);
 const db = getFirestore(app);
 const storage = getStorage(app);
 
