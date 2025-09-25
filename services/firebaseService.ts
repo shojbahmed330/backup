@@ -1,12 +1,13 @@
 // @ts-nocheck
 import {
-    getFirestore, collection, doc, setDoc, getDoc, updateDoc, addDoc, deleteDoc, onSnapshot,
+    getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, addDoc, deleteDoc, onSnapshot,
     query, where, orderBy, limit, runTransaction, writeBatch, documentId,
-    serverTimestamp, increment, arrayUnion, arrayRemove, deleteField, Timestamp
+    serverTimestamp, increment, arrayUnion, arrayRemove, deleteField, Timestamp,
+    type DocumentSnapshot, type QuerySnapshot
 } from 'firebase/firestore';
 import {
     getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
-    User as FirebaseUser
+    type User as FirebaseUser
 } from 'firebase/auth';
 import { getStorage, ref, uploadBytes, getDownloadURL, uploadString } from 'firebase/storage';
 
@@ -18,7 +19,7 @@ import { DEFAULT_AVATARS, DEFAULT_COVER_PHOTOS, CLOUDINARY_CLOUD_NAME, CLOUDINAR
 // --- Helper Functions ---
 const removeUndefined = (obj: any) => {
   if (!obj) return {};
-  const newObj = {};
+  const newObj: { [key: string]: any } = {};
   for (const key in obj) {
     if (obj[key] !== undefined) {
       newObj[key] = obj[key];
@@ -27,7 +28,7 @@ const removeUndefined = (obj: any) => {
   return newObj;
 };
 
-const docToUser = (doc: firebase.firestore.DocumentSnapshot): User => {
+const docToUser = (doc: DocumentSnapshot): User => {
     const data = doc.data();
     const user = {
         id: doc.id,
@@ -48,14 +49,14 @@ const docToUser = (doc: firebase.firestore.DocumentSnapshot): User => {
     return user;
 }
 
-const docToPost = (doc: firebase.firestore.DocumentSnapshot): Post => {
+const docToPost = (doc: DocumentSnapshot): Post => {
     const data = doc.data() || {};
     return {
         ...data,
         id: doc.id,
         createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString(),
         reactions: data.reactions || {},
-        comments: (data.comments || []).map(c => ({
+        comments: (data.comments || []).map((c: any) => ({
             ...c,
             createdAt: c.createdAt instanceof Timestamp ? c.createdAt.toDate().toISOString() : new Date().toISOString(),
         })),
@@ -169,8 +170,10 @@ export const firebaseService = {
                     blockedUserIds: [],
                     voiceCoins: 100,
                     friendIds: [],
-                    createdAt: serverTimestamp(),
                     onlineStatus: 'offline',
+                    // @ts-ignore
+                    createdAt: serverTimestamp(),
+                    // @ts-ignore
                     lastActiveTimestamp: serverTimestamp(),
                 };
                 
@@ -213,11 +216,11 @@ export const firebaseService = {
         }
     },
     
-    async signOutUser(userId: string): Promise<void> {
+    async signOutUser(userId: string | null): Promise<void> {
         if (userId) {
             try {
                 await this.updateUserOnlineStatus(userId, 'offline');
-            } catch(e) {
+            } catch(e: any) {
                 console.error("Could not set user offline before signing out, but proceeding with sign out.", e);
             }
         }
@@ -236,7 +239,7 @@ export const firebaseService = {
                 updateData.lastActiveTimestamp = serverTimestamp();
             }
             await updateDoc(userRef, updateData);
-        } catch (error) {
+        } catch (error: any) {
             // This can happen if the user logs out and rules prevent writes. It's okay to ignore.
             console.log(`Could not update online status for user ${userId}:`, error.message);
         }
@@ -287,7 +290,7 @@ export const firebaseService = {
      async getUsersByIds(userIds: string[]): Promise<User[]> {
         if (userIds.length === 0) return [];
         const usersRef = collection(db, 'users');
-        const userPromises: Promise<firebase.firestore.QuerySnapshot>[] = [];
+        const userPromises: Promise<QuerySnapshot>[] = [];
         for (let i = 0; i < userIds.length; i += 10) {
             const chunk = userIds.slice(i, i + 10);
             const q = query(usersRef, where(documentId(), 'in', chunk));
@@ -395,7 +398,7 @@ export const firebaseService = {
         try {
             await runTransaction(db, async (transaction) => {
                 transaction.update(currentUserRef, { friendIds: arrayRemove(targetUserId) });
-                transaction.update(targetUserRef, { friendIds: arrayRemove(targetUserId) });
+                transaction.update(targetUserRef, { friendIds: arrayRemove(currentUserId) });
             });
             return true;
         } catch (error) {
@@ -1065,7 +1068,7 @@ export const firebaseService = {
             const previousReaction = Object.keys(reactions).find(key => reactions[key].includes(userId));
 
             if (previousReaction) {
-                reactions[previousReaction] = reactions[previousReaction].filter(id => id !== userId);
+                reactions[previousReaction] = reactions[previousReaction].filter((id: string) => id !== userId);
             }
 
             if (previousReaction !== emoji) {
@@ -1616,7 +1619,7 @@ async leaveLiveVideoRoom(userId: string, roomId: string): Promise<void> {
         const roomDoc = await transaction.get(roomRef);
         if(roomDoc.exists()) {
             const participants = roomDoc.data().participants || [];
-            const updatedParticipants = participants.filter(p => p.id !== userId);
+            const updatedParticipants = participants.filter((p: User) => p.id !== userId);
             transaction.update(roomRef, { participants: updatedParticipants });
         }
     });
@@ -1663,7 +1666,7 @@ async inviteToSpeakInAudioRoom(hostId: string, userId: string, roomId: string): 
     await runTransaction(db, async (transaction) => {
         const roomDoc = await transaction.get(roomRef);
         if (roomDoc.exists() && roomDoc.data().host.id === hostId) {
-            const listener = roomDoc.data().listeners.find(l => l.id === userId);
+            const listener = roomDoc.data().listeners.find((l: User) => l.id === userId);
             if (listener) {
                 transaction.update(roomRef, {
                     listeners: arrayRemove(listener),
@@ -1679,7 +1682,7 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
     await runTransaction(db, async (transaction) => {
         const roomDoc = await transaction.get(roomRef);
         if (roomDoc.exists() && roomDoc.data().host.id === hostId) {
-            const speaker = roomDoc.data().speakers.find(s => s.id === userId);
+            const speaker = roomDoc.data().speakers.find((s: User) => s.id === userId);
             if (speaker && speaker.id !== hostId) {
                 transaction.update(roomRef, {
                     speakers: arrayRemove(speaker),
@@ -1847,12 +1850,13 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
         return null;
     },
     async getSuggestedGroups(userId: string): Promise<Group[]> { return []; },
-    async createGroup(creator, name, description, coverPhotoUrl, privacy, requiresApproval, category): Promise<Group> {
+    async createGroup(creator: any, name: any, description: any, coverPhotoUrl: any, privacy: any, requiresApproval: any, category: any): Promise<Group> {
         const newGroupData = { creator, name, description, coverPhotoUrl, privacy, requiresApproval, category, members: [creator], memberCount: 1, admins: [creator], moderators: [], createdAt: serverTimestamp() };
         const docRef = await addDoc(collection(db, 'groups'), newGroupData);
+        // @ts-ignore
         return { id: docRef.id, ...newGroupData, createdAt: new Date().toISOString() };
     },
-    async joinGroup(userId, groupId, answers): Promise<boolean> {
+    async joinGroup(userId: any, groupId: any, answers: any): Promise<boolean> {
         const groupRef = doc(db, 'groups', groupId);
         const user = await this.getUserProfileById(userId);
         if (!user) return false;
@@ -1860,7 +1864,7 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
         await updateDoc(groupRef, { members: arrayUnion(memberObject), memberCount: increment(1) });
         return true;
     },
-    async leaveGroup(userId, groupId): Promise<boolean> {
+    async leaveGroup(userId: any, groupId: any): Promise<boolean> {
         const groupRef = doc(db, 'groups', groupId);
         try {
             await runTransaction(db, async (transaction) => {
@@ -1882,40 +1886,40 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
             return false;
         }
     },
-    async getPostsForGroup(groupId): Promise<Post[]> {
+    async getPostsForGroup(groupId: any): Promise<Post[]> {
         const q = query(collection(db, 'posts'), where('groupId', '==', groupId), where('status', '==', 'approved'), orderBy('createdAt', 'desc'));
         const snapshot = await getDocs(q);
         return snapshot.docs.map(docToPost);
     },
-    async updateGroupSettings(groupId, settings): Promise<boolean> {
+    async updateGroupSettings(groupId: any, settings: any): Promise<boolean> {
         await updateDoc(doc(db, 'groups', groupId), removeUndefined(settings));
         return true;
     },
-    async pinPost(groupId, postId): Promise<boolean> {
+    async pinPost(groupId: any, postId: any): Promise<boolean> {
         await updateDoc(doc(db, 'groups', groupId), { pinnedPostId: postId });
         return true;
     },
-    async unpinPost(groupId): Promise<boolean> {
+    async unpinPost(groupId: any): Promise<boolean> {
         await updateDoc(doc(db, 'groups', groupId), { pinnedPostId: null });
         return true;
     },
-    async inviteFriendToGroup(groupId, friendId): Promise<boolean> {
+    async inviteFriendToGroup(groupId: any, friendId: any): Promise<boolean> {
         await updateDoc(doc(db, 'groups', groupId), { invitedUserIds: arrayUnion(friendId) });
         return true;
     },
-    async getGroupChat(groupId): Promise<GroupChat | null> {
+    async getGroupChat(groupId: any): Promise<GroupChat | null> {
         const docSnap = await getDoc(doc(db, 'groupChats', groupId));
         return docSnap.exists() ? { groupId, ...docSnap.data() } as GroupChat : null;
     },
-    async sendGroupChatMessage(groupId, sender, text): Promise<any> {
+    async sendGroupChatMessage(groupId: any, sender: any, text: any): Promise<any> {
         const message = { sender, text, createdAt: new Date().toISOString() };
         await updateDoc(doc(db, 'groupChats', groupId), { messages: arrayUnion(message) });
         return message;
     },
-    async getGroupEvents(groupId): Promise<any[]> { return []; },
-    async createGroupEvent(creator, groupId, title, description, date): Promise<any> { return null; },
-    async rsvpToEvent(userId, eventId): Promise<boolean> { return true; },
-    async adminLogin(email, password): Promise<AdminUser | null> {
+    async getGroupEvents(groupId: any): Promise<any[]> { return []; },
+    async createGroupEvent(creator: any, groupId: any, title: any, description: any, date: any): Promise<any> { return null; },
+    async rsvpToEvent(userId: any, eventId: any): Promise<boolean> { return true; },
+    async adminLogin(email: any, password: any): Promise<AdminUser | null> {
         const adminRef = doc(db, 'admins', email);
         const docSnap = await getDoc(adminRef);
         if (docSnap.exists() && docSnap.data().password === password) { // NOTE: Insecure password check for demo only
@@ -1923,19 +1927,19 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
         }
         return null;
     },
-    async adminRegister(email, password): Promise<AdminUser | null> {
+    async adminRegister(email: any, password: any): Promise<AdminUser | null> {
         const adminRef = doc(db, 'admins', email);
         const docSnap = await getDoc(adminRef);
         if (docSnap.exists()) return null;
         await setDoc(adminRef, { password });
         return { id: email, email };
     },
-    async getAdminDashboardStats() { return { totalUsers: 0, newUsersToday: 0, postsLast24h: 0, pendingCampaigns: 0, activeUsersNow: 0, pendingReports: 0, pendingPayments: 0 }; },
+    async getAdminDashboardStats(): Promise<any> { return { totalUsers: 0, newUsersToday: 0, postsLast24h: 0, pendingCampaigns: 0, activeUsersNow: 0, pendingReports: 0, pendingPayments: 0 }; },
     async getAllUsersForAdmin(): Promise<User[]> {
         const usersSnapshot = await getDocs(collection(db, 'users'));
         return usersSnapshot.docs.map(docToUser);
     },
-    async updateUserRole(userId, newRole): Promise<boolean> {
+    async updateUserRole(userId: any, newRole: any): Promise<boolean> {
         await updateDoc(doc(db, 'users', userId), { role: newRole });
         return true;
     },
@@ -1944,41 +1948,41 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
         const snapshot = await getDocs(q);
         return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Campaign));
     },
-    async approveCampaign(campaignId): Promise<void> { await updateDoc(doc(db, 'campaigns', campaignId), { status: 'active' }); },
-    async rejectCampaign(campaignId, reason): Promise<void> { await updateDoc(doc(db, 'campaigns', campaignId), { status: 'rejected' }); },
+    async approveCampaign(campaignId: any): Promise<void> { await updateDoc(doc(db, 'campaigns', campaignId), { status: 'active' }); },
+    async rejectCampaign(campaignId: any, reason: any): Promise<void> { await updateDoc(doc(db, 'campaigns', campaignId), { status: 'rejected' }); },
     async getAllPostsForAdmin(): Promise<Post[]> {
         const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'));
         const postQuery = await getDocs(q);
         return postQuery.docs.map(docToPost);
     },
-    async deletePostAsAdmin(postId): Promise<boolean> {
+    async deletePostAsAdmin(postId: any): Promise<boolean> {
         await deleteDoc(doc(db, 'posts', postId));
         return true;
     },
-    async deleteCommentAsAdmin(commentId, postId): Promise<boolean> { return true; },
-    async getPostById(postId): Promise<Post | null> {
+    async deleteCommentAsAdmin(commentId: any, postId: any): Promise<boolean> { return true; },
+    async getPostById(postId: any): Promise<Post | null> {
         const docSnap = await getDoc(doc(db, 'posts', postId));
         return docSnap.exists() ? docToPost(docSnap) : null;
     },
     async getPendingReports(): Promise<Report[]> { return []; },
-    async resolveReport(reportId, resolution): Promise<void> { await updateDoc(doc(db, 'reports', reportId), { status: 'resolved', resolution }); },
-    async banUser(userId): Promise<boolean> {
+    async resolveReport(reportId: any, resolution: any): Promise<void> { await updateDoc(doc(db, 'reports', reportId), { status: 'resolved', resolution }); },
+    async banUser(userId: any): Promise<boolean> {
         await updateDoc(doc(db, 'users', userId), { isBanned: true });
         return true;
     },
-    async unbanUser(userId): Promise<boolean> {
+    async unbanUser(userId: any): Promise<boolean> {
         await updateDoc(doc(db, 'users', userId), { isBanned: false });
         return true;
     },
-    async warnUser(userId, message): Promise<boolean> { return true; },
-    async suspendUserCommenting(userId, days): Promise<boolean> { return true; },
-    async liftUserCommentingSuspension(userId): Promise<boolean> { return true; },
-    async suspendUserPosting(userId, days): Promise<boolean> { return true; },
-    async liftUserPostingSuspension(userId): Promise<boolean> { return true; },
-    async getUserDetailsForAdmin(userId): Promise<any> { return null; },
-    async sendSiteWideAnnouncement(message): Promise<boolean> { return true; },
+    async warnUser(userId: any, message: any): Promise<boolean> { return true; },
+    async suspendUserCommenting(userId: any, days: any): Promise<boolean> { return true; },
+    async liftUserCommentingSuspension(userId: any): Promise<boolean> { return true; },
+    async suspendUserPosting(userId: any, days: any): Promise<boolean> { return true; },
+    async liftUserPostingSuspension(userId: any): Promise<boolean> { return true; },
+    async getUserDetailsForAdmin(userId: any): Promise<any> { return null; },
+    async sendSiteWideAnnouncement(message: any): Promise<boolean> { return true; },
     async getAllCampaignsForAdmin(): Promise<Campaign[]> { return []; },
-    async verifyCampaignPayment(campaignId, adminId): Promise<boolean> { return true; },
+    async verifyCampaignPayment(campaignId: any, adminId: any): Promise<boolean> { return true; },
     async adminUpdateUserProfilePicture(userId: string, base64: string): Promise<User | null> {
         const userRef = doc(db, 'users', userId);
         try {
@@ -1992,7 +1996,7 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
             return null;
         }
     },
-    async reactivateUserAsAdmin(userId): Promise<boolean> {
+    async reactivateUserAsAdmin(userId: any): Promise<boolean> {
         await updateDoc(doc(db, 'users', userId), { isDeactivated: false });
         return true;
     },
