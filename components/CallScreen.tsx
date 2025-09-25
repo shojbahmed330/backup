@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { User, Call, AppView } from '../types';
+import { User, Call } from '../types';
 import { firebaseService } from '../services/firebaseService';
 import Icon from './Icon';
 import { AGORA_APP_ID } from '../constants';
@@ -40,6 +40,12 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
     const localVideoTrack = useRef<ICameraVideoTrack | null>(null);
     const [localVideoTrackState, setLocalVideoTrackState] = useState<ICameraVideoTrack | null>(null);
     const [remoteUser, setRemoteUser] = useState<IAgoraRTCRemoteUser | null>(null);
+    
+    // Video UI State
+    const [mainViewUser, setMainViewUser] = useState<'local' | 'remote'>('remote');
+    const [previewPosition, setPreviewPosition] = useState({ x: 16, y: 16 });
+    const dragInfo = useRef<{ startX: number, startY: number, hasDragged: boolean, isDragging: boolean }>({ startX: 0, startY: 0, hasDragged: false, isDragging: false });
+
 
     const localVideoRef = useRef<HTMLDivElement>(null);
     const remoteVideoRef = useRef<HTMLDivElement>(null);
@@ -52,10 +58,7 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
             setCall(liveCall);
             callStatusRef.current = liveCall?.status || null;
             if (!liveCall || ['ended', 'declined', 'missed'].includes(liveCall.status)) {
-                // Add a small delay to allow the user to see the final status message
                 setTimeout(() => {
-                    // This check prevents a crash if the component is already unmounted
-                    // when the timeout fires, which can happen in rapid state changes.
                     if (callStatusRef.current !== 'active' && callStatusRef.current !== 'ringing') {
                         onGoBack();
                     }
@@ -92,34 +95,6 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
         }
     }, [isCaller, call?.status, callId]);
 
-    // Token Renewal Effect to prevent call drops
-    useEffect(() => {
-        let renewalInterval: number | null = null;
-        if (call?.status === 'active') {
-            renewalInterval = window.setInterval(async () => {
-                try {
-                    console.log("Renewing Agora token...");
-                    const uid = stringToIntegerHash(currentUser.id);
-                    const newToken = await geminiService.getAgoraToken(callId, uid);
-                    if (newToken && agoraClient.current) {
-                        await agoraClient.current.renewToken(newToken);
-                        console.log("Agora token renewed successfully.");
-                    } else {
-                        console.error("Failed to get new token for renewal.");
-                    }
-                } catch (error) {
-                    console.error("Error renewing Agora token:", error);
-                }
-            }, 45000); 
-        }
-
-        return () => {
-            if (renewalInterval) {
-                clearInterval(renewalInterval);
-            }
-        };
-    }, [call?.status, callId, currentUser.id]);
-
     const handleHangUp = useCallback(() => {
         if (callStatusRef.current === 'ringing' && !isCaller) {
              firebaseService.updateCallStatus(callId, 'declined');
@@ -137,12 +112,6 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
             client.on('user-published', async (user, mediaType) => {
                 await client.subscribe(user, mediaType);
                 setRemoteUser(user);
-                if (mediaType === 'video' && remoteVideoRef.current) {
-                    user.videoTrack?.play(remoteVideoRef.current);
-                }
-                if (mediaType === 'audio') {
-                    user.audioTrack?.play();
-                }
             });
 
             client.on('user-left', () => {
@@ -150,52 +119,35 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
                 firebaseService.updateCallStatus(callId, 'ended');
             });
             
-            const uid = stringToIntegerHash(`${currentUser.id}-${Date.now()}`);
+            const uid = stringToIntegerHash(currentUser.id);
             const token = await geminiService.getAgoraToken(callId, uid);
-            if (!token) {
-                throw new Error("Failed to retrieve Agora token. The call cannot proceed.");
-            }
+            if (!token) throw new Error("Failed to retrieve Agora token.");
             await client.join(AGORA_APP_ID, callId, token, uid);
 
-            let audioTrack: IMicrophoneAudioTrack | null = null;
-            let videoTrack: ICameraVideoTrack | null = null;
-
+            const tracks: (IMicrophoneAudioTrack | ICameraVideoTrack)[] = [];
             try {
-                audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
-                localAudioTrack.current = audioTrack;
+                const audio = await AgoraRTC.createMicrophoneAudioTrack();
+                localAudioTrack.current = audio;
+                tracks.push(audio);
                 setIsMicAvailable(true);
-            } catch (e) {
-                console.warn("Could not get microphone track:", e);
-                setIsMicAvailable(false);
-                setIsMuted(true);
-            }
+            } catch (e) { console.warn("Could not get mic", e); setIsMicAvailable(false); setIsMuted(true); }
 
             if (callType === 'video') {
                 try {
-                    videoTrack = await AgoraRTC.createCameraVideoTrack();
-                    localVideoTrack.current = videoTrack;
-                    setLocalVideoTrackState(videoTrack);
+                    const video = await AgoraRTC.createCameraVideoTrack();
+                    localVideoTrack.current = video;
+                    setLocalVideoTrackState(video);
+                    tracks.push(video);
                     setIsCamAvailable(true);
-                    if (localVideoRef.current) {
-                        videoTrack.play(localVideoRef.current);
-                    }
-                } catch (e) {
-                    console.warn("Could not get camera track:", e);
-                    setIsCamAvailable(false);
-                    setIsCameraOff(true);
-                }
+                } catch (e) { console.warn("Could not get cam", e); setIsCamAvailable(false); setIsCameraOff(true); }
             }
-
-            const tracksToPublish = [audioTrack, videoTrack].filter(t => t !== null) as (IMicrophoneAudioTrack | ICameraVideoTrack)[];
-            if (tracksToPublish.length > 0) {
-                await client.publish(tracksToPublish);
-            }
+            if(tracks.length > 0) await client.publish(tracks);
         };
 
         if (call?.type) {
              setupAgora(call.type).catch(error => {
                 console.error("Agora setup failed:", error);
-                onSetTtsMessage(`Could not start the call: ${error.message || 'Unknown error'}`);
+                onSetTtsMessage(`Call failed: ${error.message}`);
                 handleHangUp();
              });
         }
@@ -208,6 +160,30 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
             agoraClient.current?.leave();
         };
     }, [call?.type, callId, currentUser.id, handleHangUp, onSetTtsMessage]);
+
+     useEffect(() => {
+        const playLocalVideo = () => {
+            if (localVideoTrackState && localVideoRef.current && !isCameraOff) {
+                localVideoTrackState.play(localVideoRef.current, { fit: 'cover' });
+            }
+        };
+        const playRemoteVideo = () => {
+            if (remoteUser?.videoTrack && remoteVideoRef.current) {
+                remoteUser.videoTrack.play(remoteVideoRef.current, { fit: 'cover' });
+            }
+        };
+
+        if (localVideoTrackState?.isPlaying) localVideoTrackState.stop();
+        if (remoteUser?.videoTrack?.isPlaying) remoteUser.videoTrack.stop();
+
+        if (mainViewUser === 'local') {
+            playLocalVideo(); // local in main view
+            playRemoteVideo(); // remote in preview
+        } else {
+            playRemoteVideo(); // remote in main view
+            playLocalVideo(); // local in preview
+        }
+    }, [mainViewUser, localVideoTrackState, remoteUser, isCameraOff]);
     
     const toggleMute = () => {
         if (!isMicAvailable) return;
@@ -240,12 +216,41 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
         }
     };
     
+    // Drag and Swap handlers
+    const handleDragStart = (e: React.MouseEvent | React.TouchEvent) => {
+        dragInfo.current = { ...dragInfo.current, isDragging: true, hasDragged: false };
+        const point = 'touches' in e ? e.touches[0] : e;
+        dragInfo.current.startX = point.clientX - previewPosition.x;
+        dragInfo.current.startY = point.clientY - previewPosition.y;
+    };
+    const handleDragMove = (e: React.MouseEvent | React.TouchEvent) => {
+        if (!dragInfo.current.isDragging) return;
+        dragInfo.current.hasDragged = true;
+        const point = 'touches' in e ? e.touches[0] : e;
+        const containerRect = e.currentTarget.parentElement?.getBoundingClientRect();
+        if (!containerRect) return;
+        let newX = point.clientX - dragInfo.current.startX;
+        let newY = point.clientY - dragInfo.current.startY;
+        const previewWidth = e.currentTarget.clientWidth;
+        const previewHeight = e.currentTarget.clientHeight;
+        newX = Math.max(0, Math.min(newX, containerRect.width - previewWidth));
+        newY = Math.max(0, Math.min(newY, containerRect.height - previewHeight));
+        setPreviewPosition({ x: newX, y: newY });
+    };
+    const handleDragEnd = () => {
+        if (!dragInfo.current.hasDragged) {
+            setMainViewUser(prev => prev === 'local' ? 'remote' : 'local');
+        }
+        dragInfo.current.isDragging = false;
+    };
+
+
     if (!call) return <div className="fixed inset-0 bg-black z-[90] flex items-center justify-center text-white">Connecting...</div>
 
     const isVideoCall = call.type === 'video';
 
     return (
-        <div className="fixed inset-0 bg-slate-900 z-[90] flex flex-col items-center justify-between text-white p-6">
+        <div className="fixed inset-0 bg-slate-900 z-[90] flex flex-col items-center justify-between text-white p-6" onMouseMove={handleDragMove} onMouseUp={handleDragEnd} onMouseLeave={handleDragEnd}>
             <div className="text-center">
                 <h1 className="text-3xl font-bold">{peerUser.name}</h1>
                 <p className="text-slate-400 mt-2 text-lg">{getStatusText()}</p>
@@ -254,10 +259,38 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
             <div className="relative w-full h-full max-w-lg max-h-lg my-6">
                 {isVideoCall ? (
                     <>
-                        <div ref={remoteVideoRef} className="w-full h-full bg-black rounded-lg overflow-hidden flex items-center justify-center">
-                            {!remoteUser?.hasVideo && <img src={peerUser.avatarUrl} className="w-48 h-48 object-cover rounded-full opacity-50"/>}
+                        {/* Main View */}
+                        <div className="w-full h-full bg-black rounded-lg overflow-hidden flex items-center justify-center">
+                             {mainViewUser === 'remote' ? (
+                                <div ref={remoteVideoRef} className="w-full h-full">
+                                    {(!remoteUser?.hasVideo) && <img src={peerUser.avatarUrl} className="w-48 h-48 object-cover rounded-full opacity-50"/>}
+                                </div>
+                            ) : (
+                                <div ref={localVideoRef} className={`w-full h-full transform scale-x-[-1]`}>
+                                    {(isCameraOff || !isCamAvailable) && <div className="w-full h-full bg-slate-800 flex items-center justify-center"><img src={currentUser.avatarUrl} className="w-48 h-48 object-cover rounded-full opacity-50"/></div>}
+                                </div>
+                            )}
                         </div>
-                        <div ref={localVideoRef} className={`absolute bottom-4 right-4 w-24 h-32 bg-slate-800 rounded-lg overflow-hidden border-2 border-slate-600 ${isCameraOff || !isCamAvailable ? 'hidden' : ''} transform scale-x-[-1]`}/>
+
+                        {/* Preview View */}
+                        <div 
+                            className="absolute w-24 h-40 md:w-32 md:h-48 bg-slate-800 rounded-lg overflow-hidden border-2 border-slate-600 cursor-pointer touch-none"
+                            style={{ top: `${previewPosition.y}px`, left: `${previewPosition.x}px` }}
+                            onMouseDown={handleDragStart}
+                            onTouchStart={handleDragStart}
+                            onTouchMove={handleDragMove}
+                            onTouchEnd={handleDragEnd}
+                        >
+                            {mainViewUser === 'local' ? (
+                                <div ref={remoteVideoRef} className="w-full h-full">
+                                    {(!remoteUser?.hasVideo) && <img src={peerUser.avatarUrl} className="w-full h-full object-cover opacity-80"/>}
+                                </div>
+                            ) : (
+                                <div ref={localVideoRef} className={`w-full h-full transform scale-x-[-1]`}>
+                                    {(isCameraOff || !isCamAvailable) && <div className="w-full h-full bg-slate-800 flex items-center justify-center"><img src={currentUser.avatarUrl} className="w-full h-full object-cover opacity-80"/></div>}
+                                </div>
+                            )}
+                        </div>
                     </>
                 ) : (
                     <div className="flex flex-col items-center justify-center h-full">

@@ -60,15 +60,49 @@ const MessageBubble: React.FC<{
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
+    const formatDuration = (seconds: number) => {
+        const mins = Math.floor(seconds / 60);
+        const secs = (seconds % 60).toString().padStart(2, '0');
+        return `${mins}:${secs}`;
+    };
+
     const renderContent = () => {
         if (message.isDeleted) return <p className="italic text-sm text-slate-400">Message unsent</p>;
         switch (message.type) {
             case 'image': return <img src={message.mediaUrl} alt="Sent" className="max-w-xs max-h-48 rounded-lg cursor-pointer" />;
             case 'video': return <video src={message.mediaUrl} controls className="max-w-xs max-h-48 rounded-lg" />;
             case 'audio': return <audio src={message.audioUrl} controls className="w-48 h-10" />;
+            case 'call_history':
+                const isMissed = message.callStatus === 'missed' || message.callStatus === 'declined' || message.callStatus === 'rejected';
+                const iconName = message.callType === 'video' ? 'video-camera-slash' : 'phone';
+                const iconColor = isMissed ? 'text-red-400' : 'text-slate-400';
+                let text = '';
+                if (message.callStatus === 'ended') {
+                    text = `${message.callType === 'video' ? 'Video' : 'Audio'} call · ${formatDuration(message.callDuration || 0)}`;
+                } else if (message.callStatus === 'missed') {
+                    text = `Missed ${message.callType} call`;
+                } else {
+                    text = `Declined ${message.callType} call`;
+                }
+                return (
+                    <div className="flex items-center gap-2 text-sm italic">
+                        <Icon name={iconName} className={`w-4 h-4 ${iconColor}`} />
+                        <span>{text}</span>
+                    </div>
+                );
             default: return <p className={`text-base break-words ${isJumboEmoji(message.text) ? 'jumbo-emoji animate-jumbo' : ''}`}>{message.text}</p>;
         }
     };
+    
+    if (message.type === 'call_history') {
+        return (
+            <div className="w-full flex justify-center py-2">
+                <div className={`flex items-center gap-2 text-sm italic rounded-full px-3 py-1 ${message.callStatus === 'missed' ? 'text-red-400' : 'text-slate-400'}`}>
+                    {renderContent()}
+                </div>
+            </div>
+        );
+    }
     
     const hasReactions = message.reactions && Object.values(message.reactions).flat().length > 0;
     const isJumbo = isJumboEmoji(message.text);
@@ -278,7 +312,7 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
           </button>
         </div>
       </header>
-      <main className="relative flex-grow overflow-y-auto p-3 space-y-4 flex flex-col">
+      <main className="relative flex-grow overflow-y-auto p-3 space-y-2 flex flex-col">
         {showHeartAnimation && <div className="heart-animation-container">{Array.from({ length: 10 }).map((_, i) => (<div key={i} className="heart" style={{ left: `${Math.random() * 80 + 10}%`, animationDelay: `${Math.random() * 1.5}s`, fontSize: `${Math.random() * 1.5 + 1}rem`}}>❤️</div>))}</div>}
         {messages.map((msg) => (
             <MessageBubble key={msg.id} message={msg} isMe={msg.senderId === currentUser.id} peerUser={peerUser} currentUser={currentUser} onReply={setReplyingTo} onReact={handleReact} onUnsend={handleUnsend} onViewProfile={(u) => onNavigate(AppView.PROFILE, { username: u })} onBlockUser={(u) => { onBlockUser(u); onClose(u.id); }} onAudioCall={() => handleInitiateCall('audio')} onVideoCall={() => handleInitiateCall('video')} />

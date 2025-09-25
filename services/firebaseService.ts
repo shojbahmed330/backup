@@ -1355,6 +1355,7 @@ export const firebaseService = {
                     id: doc.id,
                     ...data,
                     createdAt: data.createdAt instanceof firebase.firestore.Timestamp ? data.createdAt.toDate().toISOString() : data.createdAt,
+                    endedAt: data.endedAt instanceof firebase.firestore.Timestamp ? data.endedAt.toDate().toISOString() : data.endedAt,
                 } as Call;
                 callback(call);
             } else {
@@ -1366,16 +1367,49 @@ export const firebaseService = {
     async updateCallStatus(callId: string, status: Call['status']): Promise<void> {
         const callRef = db.collection('calls').doc(callId);
         const updateData: { status: Call['status'], endedAt?: any } = { status };
-        if (status === 'ended' || status === 'rejected' || status === 'missed' || status === 'declined') {
+
+        const callDocBeforeUpdate = await callRef.get();
+        const callDataBeforeUpdate = callDocBeforeUpdate.data() as Call;
+
+        if (['ended', 'rejected', 'missed', 'declined'].includes(status)) {
             updateData.endedAt = serverTimestamp();
         }
         await callRef.update(updateData);
 
-        // Clean up old calls after a short delay
-        if (status === 'ended' || status === 'rejected' || status === 'missed' || status === 'declined') {
-           setTimeout(() => {
-               callRef.delete().catch(e => console.error("Failed to clean up call document:", e));
-           }, 5000); // Delete after 5 seconds
+        if (['ended', 'rejected', 'missed', 'declined'].includes(status) && callDataBeforeUpdate) {
+            let durationInSeconds = 0;
+            if (callDataBeforeUpdate.status === 'active' && status === 'ended') {
+                const start = new Date(callDataBeforeUpdate.createdAt);
+                const end = new Date();
+                durationInSeconds = Math.round((end.getTime() - start.getTime()) / 1000);
+            }
+
+            const historyMessage = {
+                senderId: callDataBeforeUpdate.caller.id,
+                recipientId: callDataBeforeUpdate.callee.id,
+                type: 'call_history',
+                read: false,
+                createdAt: serverTimestamp(),
+                callType: callDataBeforeUpdate.type,
+                callStatus: status,
+                callDuration: durationInSeconds > 0 ? durationInSeconds : undefined,
+            };
+
+            const chatId = callDataBeforeUpdate.chatId;
+            const chatRef = db.collection('chats').doc(chatId);
+            const messagesRef = chatRef.collection('messages');
+            
+            const messageDocRef = await messagesRef.add(historyMessage);
+            const lastMessageForDoc = removeUndefined({ ...historyMessage, id: messageDocRef.id, createdAt: new Date().toISOString() });
+            
+            await chatRef.update({
+                lastMessage: lastMessageForDoc,
+                lastUpdated: serverTimestamp()
+            });
+
+            setTimeout(() => {
+                callRef.delete().catch(e => console.error("Failed to clean up call document:", e));
+            }, 5000);
         }
     },
 

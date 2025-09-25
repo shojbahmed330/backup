@@ -167,13 +167,17 @@ export interface Message {
   text?: string;
   mediaUrl?: string;
   audioUrl?: string;
-  type: 'text' | 'image' | 'video' | 'audio';
+  type: 'text' | 'image' | 'video' | 'audio' | 'call_history';
   createdAt: string;
   read: boolean;
   isDeleted?: boolean;
   duration?: number;
   reactions?: { [emoji: string]: string[] };
   replyTo?: ReplyInfo;
+  // For call history
+  callType?: 'audio' | 'video';
+  callStatus?: Call['status'];
+  callDuration?: number; // in seconds
 }
 
 export interface Conversation {
@@ -359,7 +363,7 @@ export interface Call {
   type: 'audio' | 'video';
   status: 'ringing' | 'active' | 'ended' | 'rejected' | 'missed' | 'declined';
   createdAt: string;
-  endedAt?: string;
+  endedAt?: any;
 }
 
 export interface NLUResponse {
