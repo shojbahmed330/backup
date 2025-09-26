@@ -259,7 +259,7 @@ const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({ currentUser, roomId, on
     useEffect(() => {
         setIsLoading(true);
         const unsubscribe = geminiService.listenToAudioRoom(roomId, (roomDetails) => {
-            if (roomDetails) {
+            if (roomDetails && roomDetails.status === 'live') {
                 setRoom(roomDetails);
             } else {
                 onSetTtsMessageRef.current("The room has ended.");

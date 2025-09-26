@@ -245,8 +245,7 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
     }
   }, [messages, isMinimized, chatId, currentUser.id]);
   
-  const handleSendTextMessage = async (e?: React.FormEvent) => {
-    e?.preventDefault();
+  const handleSendTextMessage = async () => {
     const trimmedMessage = newMessage.trim();
     if (!trimmedMessage) return;
     
@@ -272,6 +271,14 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
     setNewMessage(''); // Clear text field too
   };
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (audioPreview) {
+        handleSendMediaMessage({ type: 'audio', audioBlob: audioPreview.blob, duration: audioPreview.duration });
+    } else {
+        handleSendTextMessage();
+    }
+  };
   
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
@@ -396,17 +403,17 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser, peerUser, onClose,
             </div>
         )}
         {replyingTo && <div className="text-xs text-slate-400 px-2 pb-1 flex justify-between items-center bg-slate-700/50 rounded-t-md -mx-2 -mt-2 mb-2 p-2"><span>Replying to {replyingTo.senderId === currentUser.id ? 'yourself' : peerUser.name}</span><button onClick={() => setReplyingTo(null)} className="font-bold"><Icon name="close" className="w-4 h-4" /></button></div>}
-        <div className="flex items-center gap-2">
+        <form onSubmit={handleSubmit} className="flex items-center gap-2">
           <input type="file" ref={mediaInputRef} onChange={handleFileChange} accept="image/*,video/*" className="hidden"/>
-          <button onClick={() => mediaInputRef.current?.click()} className="p-2 rounded-full text-fuchsia-400 hover:bg-slate-700/50"><Icon name="add-circle" className="w-6 h-6"/></button>
-          {newMessage.trim() === '' && !audioPreview && recordingState === RecordingState.IDLE ? (<button onClick={handleStartRecording} className="p-2 rounded-full text-fuchsia-400 hover:bg-slate-700/50"><Icon name="mic" className="w-6 h-6"/></button>) : null}
+          <button type="button" onClick={() => mediaInputRef.current?.click()} className="p-2 rounded-full text-fuchsia-400 hover:bg-slate-700/50"><Icon name="add-circle" className="w-6 h-6"/></button>
+          {newMessage.trim() === '' && !audioPreview && recordingState === RecordingState.IDLE ? (<button type="button" onClick={handleStartRecording} className="p-2 rounded-full text-fuchsia-400 hover:bg-slate-700/50"><Icon name="mic" className="w-6 h-6"/></button>) : null}
           <div className="flex-grow">
             {recordingState === RecordingState.RECORDING ? (<div className="bg-slate-700 rounded-full h-10 flex items-center px-4 justify-between"><div className="w-1/2 h-full"><Waveform isPlaying={true} isRecording /></div><button onClick={handleStopRecording} className="bg-rose-500 rounded-full p-2"><Icon name="pause" className="w-4 h-4 text-white"/></button></div>
             ) : audioPreview ? (<div className="bg-slate-700 rounded-full h-10 flex items-center px-4 justify-between"><p className="text-sm text-slate-300">Voice message ({audioPreview.duration}s)</p><button onClick={handleCancelRecording} className="p-1"><Icon name="close" className="w-4 h-4 text-slate-400"/></button></div>
-            ) : (<div className="relative"><textarea value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && !e.shiftKey) handleSendTextMessage(e); }} placeholder="Aa" rows={1} className={`w-full bg-slate-700 rounded-full py-2 px-4 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm resize-none pr-10 ${activeTheme.text}`} /><button type="button" onClick={() => setEmojiPickerOpen(p => !p)} className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-slate-300 hover:text-white"><Icon name="face-smile" className="w-5 h-5"/></button></div>)}
+            ) : (<div className="relative"><textarea value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e); } }} placeholder="Aa" rows={1} className={`w-full bg-slate-700 rounded-full py-2 px-4 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm resize-none pr-10 ${activeTheme.text}`} /><button type="button" onClick={() => setEmojiPickerOpen(p => !p)} className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-slate-300 hover:text-white"><Icon name="face-smile" className="w-5 h-5"/></button></div>)}
           </div>
-          <button type="button" onClick={audioPreview ? () => handleSendMediaMessage({ type: 'audio', audioBlob: audioPreview.blob, duration: audioPreview.duration }) : handleSendTextMessage} className="p-2 rounded-full text-fuchsia-400 hover:bg-slate-700/50" disabled={!newMessage.trim() && !audioPreview}><Icon name="paper-airplane" className="w-6 h-6" /></button>
-        </div>
+          <button type="submit" className="p-2.5 rounded-full text-fuchsia-400 hover:bg-slate-700/50" disabled={!newMessage.trim() && !audioPreview}><Icon name="paper-airplane" className="w-6 h-6" /></button>
+        </form>
       </footer>
     </div>
   );

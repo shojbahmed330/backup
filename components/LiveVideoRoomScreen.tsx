@@ -236,7 +236,7 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
     // Firestore listeners for room details and messages
     useEffect(() => {
         const unsubRoom = geminiService.listenToVideoRoom(roomId, (liveRoom) => {
-            if (liveRoom) {
+            if (liveRoom && liveRoom.status === 'live') {
                 setRoom(liveRoom);
             } else {
                 onGoBack();
