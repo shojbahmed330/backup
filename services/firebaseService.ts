@@ -1605,16 +1605,23 @@ async joinLiveVideoRoom(userId: string, roomId: string): Promise<void> {
     const user = await this.getUserProfileById(userId);
     if (!user) return;
     const roomRef = doc(db, 'liveVideoRooms', roomId);
-    const participantData: VideoParticipantState = {
-        id: user.id,
-        name: user.name,
-        username: user.username,
-        avatarUrl: user.avatarUrl,
-        isMuted: false,
-        isCameraOff: false,
-    };
-    await updateDoc(roomRef, {
-        participants: arrayUnion(participantData),
+
+    await runTransaction(db, async (transaction) => {
+        const roomDoc = await transaction.get(roomRef);
+        if (!roomDoc.exists()) throw "Room does not exist!";
+        
+        const roomData = roomDoc.data() as LiveVideoRoom;
+        const participants = roomData.participants || [];
+        const isAlreadyParticipant = participants.some(p => p.id === userId);
+
+        if (!isAlreadyParticipant) {
+            const participantData: VideoParticipantState = {
+                id: user.id, name: user.name, username: user.username,
+                avatarUrl: user.avatarUrl, isMuted: false, isCameraOff: false,
+            };
+            const updatedParticipants = [...participants, participantData];
+            transaction.update(roomRef, { participants: updatedParticipants });
+        }
     });
 },
 async leaveLiveAudioRoom(userId: string, roomId: string): Promise<void> {

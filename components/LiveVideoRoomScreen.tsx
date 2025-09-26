@@ -5,6 +5,7 @@ import Icon from './Icon';
 import { AGORA_APP_ID } from '../constants';
 import AgoraRTC from 'agora-rtc-sdk-ng';
 import type { IAgoraRTCClient, IAgoraRTCRemoteUser, IMicrophoneAudioTrack, ICameraVideoTrack } from 'agora-rtc-sdk-ng';
+import { firebaseService } from '../services/firebaseService';
 
 // --- Helper Functions & Types ---
 
@@ -128,33 +129,22 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
     const localAudioTrack = useRef<IMicrophoneAudioTrack | null>(null);
     const localVideoTrack = useRef<ICameraVideoTrack | null>(null);
     
-    const messagesEndRef = useRef<HTMLDivElement>(null);
-    const isMobile = useIsMobile();
+    const [localVideoTrackState, setLocalVideoTrackState] = useState<ICameraVideoTrack | null>(null);
+    const [remoteUser, setRemoteUser] = useState<IAgoraRTCRemoteUser | null>(null);
+    
+    // Video UI State
     const [mainParticipantId, setMainParticipantId] = useState<string | null>(null);
     const [controlsVisible, setControlsVisible] = useState(true);
     const controlsTimeoutRef = useRef<number | null>(null);
 
-    // Sync Firestore & Agora data into a unified `participants` state
-    useEffect(() => {
-        if (!room) return;
-        setParticipants(prevParticipants => {
-            const newParticipantsFromRoom = room.participants;
-            const prevMap = new Map(prevParticipants.map(p => [p.id, p]));
-            return newParticipantsFromRoom.map(newP => {
-                const oldP = prevMap.get(newP.id);
-                // FIX: Added an explicit check for `oldP` to help TypeScript infer its type correctly,
-                // resolving the "property does not exist on type 'unknown'" error.
-                if (oldP) {
-                    // Preserve agoraUser and isSpeaking from previous state
-                    return { ...newP, agoraUser: oldP.agoraUser, isSpeaking: oldP.isSpeaking };
-                }
-                // For new participants, initialize with default values
-                return { ...newP, agoraUser: undefined, isSpeaking: false };
-            });
-        });
-    }, [room]);
+    const messagesEndRef = useRef<HTMLDivElement>(null);
+    const isMobile = useIsMobile();
+    const [previewPosition, setPreviewPosition] = useState({ x: 16, y: 16 });
+    const dragInfo = useRef<{ startX: number, startY: number, hasDragged: boolean, isDragging: boolean }>({ startX: 0, startY: 0, hasDragged: false, isDragging: false });
+    // FIX: Removed unused ref that was causing type errors.
     
-    // Manage Agora connection and event listeners
+
+    // Agora Lifecycle and state management
     useEffect(() => {
         let isMounted = true;
         const client = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
@@ -163,22 +153,24 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
         const handleUserPublished = async (user: IAgoraRTCRemoteUser, mediaType: 'audio' | 'video') => {
             await client.subscribe(user, mediaType);
             if (!isMounted) return;
-            setParticipants(prev => prev.map(p => stringToIntegerHash(p.id) === user.uid ? { ...p, agoraUser: user } : p));
-            if (mediaType === 'audio') user.audioTrack?.play();
+            setRemoteUser(user);
+             if (mediaType === 'audio') user.audioTrack?.play();
         };
 
+        // FIX: Corrected handleUserLeft to remove incorrect logic copied from another component.
+        // The Firestore listener will handle participant list updates. This just handles Agora state.
         const handleUserLeft = (user: IAgoraRTCRemoteUser) => {
-            if (!isMounted) return;
-            setParticipants(prev => prev.map(p => stringToIntegerHash(p.id) === user.uid ? { ...p, agoraUser: undefined } : p));
+             if (!isMounted) return;
+             setRemoteUser(null);
         };
 
         const handleVolumeIndicator = (volumes: { uid: number; level: number }[]) => {
             if (!isMounted) return;
             const speakingUids = new Set(volumes.filter(v => v.level > 10).map(v => v.uid));
-            setParticipants(prev => prev.map(p => ({ ...p, isSpeaking: speakingUids.has(stringToIntegerHash(p.id)) || (p.id === currentUser.id && speakingUids.has(client.uid)) })));
+            setParticipants(prev => prev.map(p => ({ ...p, isSpeaking: speakingUids.has(stringToIntegerHash(p.id)) })));
         };
 
-        const setupAgora = async () => {
+        const setupAgora = async (callType: 'audio' | 'video') => {
             client.on('user-published', handleUserPublished);
             client.on('user-left', handleUserLeft);
             client.enableAudioVolumeIndicator();
@@ -187,7 +179,6 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
             const uid = stringToIntegerHash(currentUser.id);
             const token = await geminiService.getAgoraToken(roomId, uid);
             if (!token) throw new Error("Failed to get Agora token.");
-
             await client.join(AGORA_APP_ID, roomId, token, uid);
 
             let initialMuted = false;
@@ -203,16 +194,18 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
                 initialMuted = true;
             }
 
-            try {
-                const video = await AgoraRTC.createCameraVideoTrack();
-                localVideoTrack.current = video;
-                setIsCamAvailable(true);
-            } catch (e) {
-                console.warn("Cam not available", e);
-                setIsCamAvailable(false);
-                initialCamOff = true;
+            if (callType === 'video') {
+                try {
+                    const video = await AgoraRTC.createCameraVideoTrack();
+                    localVideoTrack.current = video;
+                    setLocalVideoTrackState(video);
+                    setIsCamAvailable(true);
+                } catch (e) {
+                    console.warn("Cam not available", e);
+                    setIsCamAvailable(false);
+                    initialCamOff = true;
+                }
             }
-
             const tracksToPublish = [localAudioTrack.current, localVideoTrack.current].filter(Boolean) as (IMicrophoneAudioTrack | ICameraVideoTrack)[];
             if (tracksToPublish.length > 0) await client.publish(tracksToPublish);
 
@@ -223,7 +216,11 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
         };
 
         geminiService.joinLiveVideoRoom(currentUser.id, roomId)
-            .then(setupAgora)
+            .then(() => geminiService.getRoomDetails(roomId, 'video'))
+            .then(roomDetails => {
+                 // FIX: Correctly call setupAgora for a video room. The 'type' property does not exist on the room object.
+                 if (roomDetails && isMounted) setupAgora('video');
+            })
             .catch(err => {
                 console.error("Failed to join or setup Agora:", err);
                 onSetTtsMessage("Could not join the room.");
@@ -239,15 +236,78 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
         };
     }, [roomId, currentUser.id, onGoBack, onSetTtsMessage]);
 
-    // Firestore listeners
+    // Firestore listeners for room details and messages
     useEffect(() => {
-        const unsubRoom = geminiService.listenToVideoRoom(roomId, setRoom);
+        const unsubRoom = geminiService.listenToVideoRoom(roomId, (liveRoom) => {
+            if (liveRoom) {
+                // Ensure local user is always in the list with the most up-to-date local state
+                const currentParticipants = liveRoom.participants || [];
+                const localUserInList = currentParticipants.some(p => p.id === currentUser.id);
+
+                if (!localUserInList) {
+                    const localParticipantPlaceholder: VideoParticipantState = {
+                        id: currentUser.id, name: currentUser.name, username: currentUser.username,
+                        avatarUrl: currentUser.avatarUrl, isMuted, isCameraOff,
+                    };
+                    liveRoom.participants = [localParticipantPlaceholder, ...currentParticipants];
+                } else {
+                    liveRoom.participants = currentParticipants.map(p => 
+                        p.id === currentUser.id ? { ...p, isMuted, isCameraOff } : p
+                    );
+                }
+                setRoom(liveRoom);
+            } else {
+                onGoBack();
+            }
+        });
         const unsubMessages = geminiService.listenToLiveVideoRoomMessages(roomId, setMessages);
         return () => {
             unsubRoom();
             unsubMessages();
         };
-    }, [roomId]);
+    }, [roomId, currentUser, onGoBack, isMuted, isCameraOff]);
+
+     // Sync Agora user objects with participants list
+     useEffect(() => {
+        if (!room) return;
+        const remoteAgoraUser = remoteUser;
+        
+        // FIX: Rewrote state update to be safer against spread errors and fix a stale closure bug.
+        setParticipants(prevParticipants => {
+            const participantMap = new Map(prevParticipants.map(p => [p.id, p]));
+
+            // Update or create local participant state
+            const existingLocal = participantMap.get(currentUser.id);
+            const localParticipantUpdate: CombinedParticipant = {
+                ...(existingLocal || {
+                    id: currentUser.id,
+                    name: currentUser.name,
+                    username: currentUser.username,
+                    avatarUrl: currentUser.avatarUrl,
+                    isMuted: false,
+                    isCameraOff: false,
+                }),
+                isMuted,
+                isCameraOff,
+            };
+            participantMap.set(currentUser.id, localParticipantUpdate);
+
+            // Update remote participant with Agora user object
+            if (remoteAgoraUser) {
+                const remoteParticipantId = prevParticipants.find(p => stringToIntegerHash(p.id) === remoteAgoraUser.uid)?.id;
+                if(remoteParticipantId) {
+                    const remoteParticipant = participantMap.get(remoteParticipantId);
+                    if(remoteParticipant) {
+                         participantMap.set(remoteParticipantId, { ...remoteParticipant, agoraUser: remoteAgoraUser });
+                    }
+                }
+            }
+            
+            return Array.from(participantMap.values());
+        });
+    }, [room, remoteUser, currentUser, isMuted, isCameraOff]);
+
+
     
     // Other useEffects for UI logic
     useEffect(() => { setIsChatOpen(!isMobile); }, [isMobile]);
