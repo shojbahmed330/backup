@@ -289,7 +289,11 @@ export interface LiveAudioRoom {
   status: 'live' | 'ended';
 }
 
-export interface VideoParticipantState extends User {
+export interface VideoParticipantState {
+    id: string;
+    name: string;
+    username: string;
+    avatarUrl: string;
     isMuted: boolean;
     isCameraOff: boolean;
 }

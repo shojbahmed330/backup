@@ -1573,12 +1573,19 @@ async createLiveAudioRoom(host: User, topic: string): Promise<LiveAudioRoom> {
     } as LiveAudioRoom;
 },
 async createLiveVideoRoom(host: User, topic: string): Promise<LiveVideoRoom> {
-    const hostAsParticipant = removeUndefined({ ...host, isMuted: false, isCameraOff: false });
+    const hostAsParticipant: VideoParticipantState = {
+        id: host.id,
+        name: host.name,
+        username: host.username,
+        avatarUrl: host.avatarUrl,
+        isMuted: false,
+        isCameraOff: false,
+    };
     const newRoomData = {
         host: { id: host.id, name: host.name, username: host.username, avatarUrl: host.avatarUrl },
         topic, participants: [hostAsParticipant], createdAt: serverTimestamp(), status: 'live',
     };
-    const docRef = await addDoc(collection(db, 'liveVideoRooms'), removeUndefined(newRoomData));
+    const docRef = await addDoc(collection(db, 'liveVideoRooms'), newRoomData);
     const docSnap = await getDoc(docRef);
     const data = docSnap.data();
     return {
@@ -1598,7 +1605,14 @@ async joinLiveVideoRoom(userId: string, roomId: string): Promise<void> {
     const user = await this.getUserProfileById(userId);
     if (!user) return;
     const roomRef = doc(db, 'liveVideoRooms', roomId);
-    const participantData = removeUndefined({ ...user, isMuted: false, isCameraOff: false });
+    const participantData: VideoParticipantState = {
+        id: user.id,
+        name: user.name,
+        username: user.username,
+        avatarUrl: user.avatarUrl,
+        isMuted: false,
+        isCameraOff: false,
+    };
     await updateDoc(roomRef, {
         participants: arrayUnion(participantData),
     });
@@ -1619,7 +1633,7 @@ async leaveLiveVideoRoom(userId: string, roomId: string): Promise<void> {
         const roomDoc = await transaction.get(roomRef);
         if(roomDoc.exists()) {
             const participants = roomDoc.data().participants || [];
-            const updatedParticipants = participants.filter((p: User) => p.id !== userId);
+            const updatedParticipants = participants.filter((p: VideoParticipantState) => p.id !== userId);
             transaction.update(roomRef, { participants: updatedParticipants });
         }
     });
@@ -1706,7 +1720,10 @@ async moveToAudienceInAudioRoom(hostId: string, userId: string, roomId: string):
 
                 if (participantIndex > -1) {
                     const existingParticipant = participants[participantIndex];
-                    const updatedParticipant = removeUndefined({ ...existingParticipant, ...updates });
+                    const updatedParticipant: VideoParticipantState = {
+                        ...existingParticipant,
+                        ...updates,
+                    };
                     participants[participantIndex] = updatedParticipant;
                     transaction.update(roomRef, { participants });
                 }
