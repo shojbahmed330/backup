@@ -11,6 +11,9 @@ export const REWARD_AD_COIN_VALUE = 5;
 // IMPORTANT: Replace with your actual Agora App ID
 export const AGORA_APP_ID = '0063ad751cdb46bcbf9feb29f639be75'; 
 
+// The Banuba Client Token should be set in your Vercel environment variables.
+export const BANUBA_CLIENT_TOKEN = process.env.BANUBA_CLIENT_TOKEN || '';
+
 
 export const REEL_TEXT_FONTS = [
   { name: 'Sans', class: 'font-sans' },
