@@ -9,7 +9,6 @@ import { firebaseService } from '../services/firebaseService';
 
 // Banuba SDK is loaded from script tags, so we declare it on the window object
 declare const BanubaSDK: any;
-declare const BanubaPlayer: any;
 declare const Dom: any;
 
 // --- Helper Functions & Types ---
@@ -46,15 +45,13 @@ const useIsMobile = () => {
 const ParticipantVideo: React.FC<{
     participant: CombinedParticipant;
     isLocal: boolean;
-    localVideoTrack: ICameraVideoTrack | null;
     onClick?: () => void;
     isMainView?: boolean;
-}> = ({ participant, isLocal, localVideoTrack, onClick, isMainView }) => {
+}> = ({ participant, isLocal, onClick, isMainView }) => {
     const videoRef = useRef<HTMLDivElement>(null);
-    const banubaPreviewRef = useRef<HTMLCanvasElement | null>(null);
 
     useEffect(() => {
-        if(isLocal) return; // Local video is handled separately with Banuba's output canvas
+        if(isLocal) return; // Local video is handled separately with Banuba's output canvas or standard track
 
         const videoContainer = videoRef.current;
         if (!videoContainer) return;
@@ -82,7 +79,6 @@ const ParticipantVideo: React.FC<{
             onClick={onClick}
         >
             {showVideo ? (
-                // For local user, Banuba's output canvas will be appended here. For remote, Agora appends video.
                 <div ref={videoRef} className={`w-full h-full transition-transform duration-300 group-hover:scale-105 ${isLocal ? 'transform scale-x-[-1]' : ''}`} />
             ) : (
                 <div className="w-full h-full flex items-center justify-center bg-black">
@@ -141,16 +137,15 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
 
     const agoraClient = useRef<IAgoraRTCClient | null>(null);
     const localAudioTrack = useRef<IMicrophoneAudioTrack | null>(null);
-    const originalVideoTrack = useRef<ICameraVideoTrack | null>(null);
-    const customVideoTrack = useRef<ICustomVideoTrack | null>(null);
+    const localVideoTrack = useRef<ICameraVideoTrack | ICustomVideoTrack | null>(null);
     
     const [remoteUsers, setRemoteUsers] = useState<IAgoraRTCRemoteUser[]>([]);
     const [speakingVolumes, setSpeakingVolumes] = useState<{ uid: number; level: number }[]>([]);
     
     const [mainParticipantId, setMainParticipantId] = useState<string | null>(null);
     const [controlsVisible, setControlsVisible] = useState(true);
-    const controlsTimeoutRef = useRef<number | null>(null);
 
+    const localVideoContainerRef = useRef<HTMLDivElement>(null); // A dedicated ref for the local user's video view
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const isMobile = useIsMobile();
     
@@ -202,31 +197,46 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
                 setIsMicAvailable(true);
             } catch (e) { console.warn("Mic not available", e); setIsMicAvailable(false); setIsMuted(true); }
             
+             const useBanuba = BANUBA_CLIENT_TOKEN && isFilterOn;
+
             try {
-                const videoTrack = await AgoraRTC.createCameraVideoTrack();
-                originalVideoTrack.current = videoTrack;
-                
-                const player = await BanubaSDK.createPlayer({ clientToken: BANUBA_CLIENT_TOKEN });
-                banubaPlayer.current = player;
-                
-                player.use(videoTrack, { mirrored: true });
-                player.play();
+                if (useBanuba) {
+                    console.log("Banuba Token found, initializing beauty filter for group call.");
+                    const originalVideoTrack = await AgoraRTC.createCameraVideoTrack();
+                    
+                    const player = await BanubaSDK.createPlayer({ clientToken: BANUBA_CLIENT_TOKEN });
+                    banubaPlayer.current = player;
+                    const effect = await player.applyEffect('effects/Beautification', 'face_ar');
+                    banubaEffect.current = effect;
 
-                // Wait for the player to render its canvas
-                await new Promise(resolve => setTimeout(resolve, 500)); 
+                    await player.use(originalVideoTrack);
+                    player.play();
 
-                const banubaCanvas = Dom.getOutputElement(player);
-                const mediaStream = banubaCanvas.captureStream(30);
-                const videoStreamTrack = mediaStream.getVideoTracks()[0];
-                
-                const customTrack = AgoraRTC.createCustomVideoTrack({ mediaStreamTrack: videoStreamTrack });
-                customVideoTrack.current = customTrack;
-                
-                await client.publish(customTrack);
+                    await new Promise(resolve => setTimeout(resolve, 500)); 
+                    const banubaCanvas = Dom.getOutputElement(player);
+                    
+                    const mediaStream = banubaCanvas.captureStream(30);
+                    const videoStreamTrack = mediaStream.getVideoTracks()[0];
+                    
+                    const customTrack = AgoraRTC.createCustomVideoTrack({ mediaStreamTrack: videoStreamTrack });
+                    localVideoTrack.current = customTrack;
+                    await client.publish(customTrack);
+
+                } else {
+                    console.log("Banuba Token NOT found, using standard video for group call.");
+                    const videoTrack = await AgoraRTC.createCameraVideoTrack();
+                    localVideoTrack.current = videoTrack;
+                    await client.publish(videoTrack);
+                    if (localVideoContainerRef.current) {
+                        videoTrack.play(localVideoContainerRef.current, { fit: 'cover' });
+                    }
+                }
                 setIsCamAvailable(true);
-
-            } catch (e) { console.error("Could not get cam or initialize Banuba:", e); setIsCamAvailable(false); setIsCameraOff(true); }
-
+            } catch (e) {
+                console.error("Video setup failed (Banuba or standard):", e);
+                setIsCamAvailable(false);
+                setIsCameraOff(true);
+            }
             await geminiService.updateParticipantStateInVideoRoom(roomId, currentUser.id, { isMuted, isCameraOff });
         };
 
@@ -241,13 +251,12 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
         return () => {
             isMounted = false;
             localAudioTrack.current?.close();
-            originalVideoTrack.current?.close();
-            customVideoTrack.current?.close();
+            localVideoTrack.current?.close();
             banubaPlayer.current?.dispose();
             agoraClient.current?.leave();
             geminiService.leaveLiveVideoRoom(currentUser.id, roomId);
         };
-    }, [roomId, currentUser.id, onGoBack, onSetTtsMessage]);
+    }, [roomId, currentUser.id, onGoBack, onSetTtsMessage, isFilterOn]);
 
     // Firestore listeners
     useEffect(() => {
@@ -277,18 +286,16 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
     }, [room, remoteUsers, speakingVolumes, currentUser, isMuted, isCameraOff]);
 
     useEffect(() => {
-      const player = banubaPlayer.current;
-      if (!player) return;
+        const player = banubaPlayer.current;
+        if (!player || !isFilterOn) {
+            if(player && !isFilterOn) player.clearEffect();
+            return;
+        };
 
-      if (isFilterOn) {
         player.applyEffect('effects/Beautification', 'face_ar').then((effect:any) => {
             banubaEffect.current = effect;
             effect.evalJs(`Beautification.set('SkinSmoothing', ${filterIntensity})`);
         });
-      } else {
-        player.clearEffect();
-        banubaEffect.current = null;
-      }
     }, [isFilterOn, filterIntensity]);
     
     useEffect(() => { setIsChatOpen(!isMobile); }, [isMobile]);
@@ -309,10 +316,9 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
     };
 
     const toggleCamera = async () => {
-        if (!isCamAvailable) return;
+        if (!isCamAvailable || !localVideoTrack.current) return;
         const cameraOff = !isCameraOff;
-        await originalVideoTrack.current?.setEnabled(!cameraOff); // Control original track
-        banubaPlayer.current?.play();
+        await localVideoTrack.current.setEnabled(!cameraOff);
         setIsCameraOff(cameraOff);
         await geminiService.updateParticipantStateInVideoRoom(roomId, currentUser.id, { isCameraOff: cameraOff });
     };
@@ -331,9 +337,16 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
 
     const renderParticipant = (p: CombinedParticipant, isMainView = false) => {
         const isLocal = p.id === currentUser.id;
+        const refProp = isLocal ? { ref: localVideoContainerRef } : {};
+
         return (
-            <div key={p.id} className="relative rounded-lg overflow-hidden transition-all duration-300 w-full h-full" onClick={isMainView ? undefined : () => setMainParticipantId(p.id)}>
-                <ParticipantVideo participant={p} isLocal={isLocal} localVideoTrack={null} isMainView={isMainView} />
+            <div 
+                key={p.id} 
+                className="relative rounded-lg overflow-hidden transition-all duration-300 w-full h-full" 
+                {...refProp}
+                onClick={isMainView ? undefined : () => setMainParticipantId(p.id)}
+            >
+                <ParticipantVideo participant={p} isLocal={isLocal} isMainView={isMainView} />
             </div>
         );
     };
@@ -355,7 +368,7 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
                 )}
                  <div className={`absolute bottom-0 left-0 right-0 p-4 z-30 transition-all duration-300 ${controlsVisible || !isMobile ? 'animate-controls-fade-in' : 'animate-controls-fade-out pointer-events-none'}`}>
                      <div className="flex flex-col items-center gap-4">
-                        {isFilterOn && (
+                        {isFilterOn && BANUBA_CLIENT_TOKEN && (
                             <div className="bg-black/40 backdrop-blur-sm p-3 rounded-full w-64 flex items-center gap-3">
                                 <Icon name="swatch" className="w-5 h-5 text-fuchsia-300"/>
                                 <input type="range" min="0" max="1" step="0.05" value={filterIntensity} onChange={e => setFilterIntensity(parseFloat(e.target.value))} className="w-full h-1.5 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-fuchsia-500"/>
@@ -364,7 +377,7 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
                         <div className="max-w-md mx-auto bg-black/50 backdrop-blur-md p-3 rounded-full flex items-center justify-center gap-4">
                             <button onClick={toggleMute} disabled={!isMicAvailable} className={`p-4 rounded-full transition-colors ${!isMicAvailable ? 'bg-red-600/50' : isMuted ? 'bg-rose-600' : 'bg-slate-700'}`}><Icon name={!isMicAvailable || isMuted ? 'microphone-slash' : 'mic'} className="w-6 h-6" /></button>
                             <button onClick={toggleCamera} disabled={!isCamAvailable} className={`p-4 rounded-full transition-colors ${!isCamAvailable ? 'bg-red-600/50' : isCameraOff ? 'bg-rose-600' : 'bg-slate-700'}`}><Icon name={!isCamAvailable || isCameraOff ? 'video-camera-slash' : 'video-camera'} className="w-6 h-6" /></button>
-                            <button onClick={() => setIsFilterOn(p => !p)} className={`p-4 rounded-full transition-colors ${isFilterOn ? 'bg-fuchsia-600' : 'bg-slate-700'}`}><Icon name="swatch" className="w-6 h-6"/></button>
+                            {BANUBA_CLIENT_TOKEN && <button onClick={() => setIsFilterOn(p => !p)} className={`p-4 rounded-full transition-colors ${isFilterOn ? 'bg-fuchsia-600' : 'bg-slate-700'}`}><Icon name="swatch" className="w-6 h-6"/></button>}
                             {isMobile && <button onClick={() => setIsChatOpen(true)} className="p-4 rounded-full bg-slate-700"><Icon name="message" className="w-6 h-6"/></button>}
                             <button onClick={handleLeaveOrEnd} className="p-4 rounded-full bg-red-600"><svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" transform="rotate(-135 12 12)"/></svg></button>
                         </div>

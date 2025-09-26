@@ -9,7 +9,6 @@ import { geminiService } from '../services/geminiService';
 
 // Banuba SDK is loaded from script tags, so we declare it on the window object
 declare const BanubaSDK: any;
-declare const BanubaPlayer: any;
 declare const Dom: any;
 
 interface CallScreenProps {
@@ -48,8 +47,7 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
 
     const agoraClient = useRef<IAgoraRTCClient | null>(null);
     const localAudioTrack = useRef<IMicrophoneAudioTrack | null>(null);
-    const localVideoTrack = useRef<ICameraVideoTrack | null>(null);
-    const customVideoTrack = useRef<ICustomVideoTrack | null>(null);
+    const localVideoTrack = useRef<ICameraVideoTrack | ICustomVideoTrack | null>(null); // Can be original or custom
     const [remoteUser, setRemoteUser] = useState<IAgoraRTCRemoteUser | null>(null);
     
     const localVideoRef = useRef<HTMLDivElement>(null);
@@ -116,44 +114,62 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
             if (!token) throw new Error("Failed to retrieve Agora token.");
             await client.join(AGORA_APP_ID, callId, token, uid);
 
-            let audioTrack: IMicrophoneAudioTrack | null = null;
             try {
-                audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+                const audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
                 localAudioTrack.current = audioTrack;
                 await client.publish(audioTrack);
                 setIsMicAvailable(true);
             } catch (e) { console.warn("Could not get mic", e); setIsMicAvailable(false); setIsMuted(true); }
 
             if (callType === 'video') {
+                const useBanuba = BANUBA_CLIENT_TOKEN && isFilterOn;
+
                 try {
-                    const videoTrack = await AgoraRTC.createCameraVideoTrack();
-                    localVideoTrack.current = videoTrack;
-                    
-                    const player = await BanubaSDK.createPlayer({ clientToken: BANUBA_CLIENT_TOKEN });
-                    banubaPlayer.current = player;
-                    const effect = await player.applyEffect('effects/Beautification', 'face_ar');
-                    banubaEffect.current = effect;
+                    if (useBanuba) {
+                        console.log("Banuba Token found, initializing beauty filter.");
+                        const originalVideoTrack = await AgoraRTC.createCameraVideoTrack();
+                        
+                        const player = await BanubaSDK.createPlayer({ clientToken: BANUBA_CLIENT_TOKEN });
+                        banubaPlayer.current = player;
 
-                    const banubaCanvas = Dom.getOutputElement(player);
-                    const mediaStream = banubaCanvas.captureStream(30);
-                    const videoStreamTrack = mediaStream.getVideoTracks()[0];
-                    
-                    const customTrack = AgoraRTC.createCustomVideoTrack({ mediaStreamTrack: videoStreamTrack });
-                    customVideoTrack.current = customTrack;
-                    
-                    await client.publish(customTrack);
-                    setIsCamAvailable(true);
-                    
-                    if (localVideoRef.current) {
-                         videoTrack.play(localVideoRef.current, { fit: 'cover' }); // Play original for preview
+                        const effect = await player.applyEffect('effects/Beautification', 'face_ar');
+                        banubaEffect.current = effect;
+
+                        await player.use(originalVideoTrack);
+                        player.play();
+
+                        await new Promise(resolve => setTimeout(resolve, 500)); 
+
+                        const banubaCanvas = Dom.getOutputElement(player);
+                        if (localVideoRef.current) {
+                            localVideoRef.current.innerHTML = '';
+                            banubaCanvas.style.width = '100%';
+                            banubaCanvas.style.height = '100%';
+                            banubaCanvas.style.objectFit = 'cover';
+                            localVideoRef.current.appendChild(banubaCanvas);
+                        }
+
+                        const mediaStream = banubaCanvas.captureStream(30);
+                        const videoStreamTrack = mediaStream.getVideoTracks()[0];
+                        
+                        const customTrack = AgoraRTC.createCustomVideoTrack({ mediaStreamTrack: videoStreamTrack });
+                        localVideoTrack.current = customTrack;
+                        await client.publish(customTrack);
+
+                    } else {
+                        console.log("Banuba Token NOT found, using standard video call.");
+                        const videoTrack = await AgoraRTC.createCameraVideoTrack();
+                        localVideoTrack.current = videoTrack;
+                        await client.publish(videoTrack);
+                        if (localVideoRef.current) {
+                            videoTrack.play(localVideoRef.current, { fit: 'cover' });
+                        }
                     }
-                    player.use(videoTrack, { mirrored: true });
-                    player.play();
-
-                } catch (e) { 
-                    console.error("Could not get cam or initialize Banuba:", e); 
-                    setIsCamAvailable(false); 
-                    setIsCameraOff(true); 
+                    setIsCamAvailable(true);
+                } catch (e) {
+                    console.error("Video setup failed (either Banuba or standard):", e);
+                    setIsCamAvailable(false);
+                    setIsCameraOff(true);
                 }
             }
         };
@@ -168,11 +184,10 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
         return () => {
             localAudioTrack.current?.close();
             localVideoTrack.current?.close();
-            customVideoTrack.current?.close();
             banubaPlayer.current?.dispose();
             agoraClient.current?.leave();
         };
-    }, [call?.type, callId, currentUser.id, handleHangUp]);
+    }, [call?.type, callId, currentUser.id, handleHangUp, isFilterOn]);
 
     const toggleMute = () => {
         if (!isMicAvailable) return;
@@ -182,9 +197,9 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
     };
 
     const toggleCamera = async () => {
-        if (!isCamAvailable) return;
+        if (!isCamAvailable || !localVideoTrack.current) return;
         const cameraOff = !isCameraOff;
-        await localVideoTrack.current?.setEnabled(!cameraOff);
+        await localVideoTrack.current.setEnabled(!cameraOff);
         setIsCameraOff(cameraOff);
     };
     
@@ -211,7 +226,7 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
         <div className="fixed inset-0 bg-slate-900 z-[90] flex flex-col items-center justify-center text-white">
             {/* Remote Video (Fullscreen Background) */}
             <div ref={remoteVideoRef} className="absolute inset-0 w-full h-full">
-                {!remoteUser?.hasVideo && (
+                {(!remoteUser?.hasVideo || peerUser.isDeactivated) && (
                     <div className="w-full h-full flex flex-col items-center justify-center bg-black">
                         <img src={peerUser.avatarUrl} className="w-48 h-48 object-cover rounded-full opacity-50"/>
                         <p className="mt-4 text-xl">{peerUser.name}</p>
@@ -223,7 +238,10 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
             
             {/* Local Video Preview */}
             {isVideoCall && (
-                <div ref={localVideoRef} className={`absolute top-4 right-4 w-32 h-48 bg-black rounded-lg overflow-hidden border-2 border-slate-600 transform scale-x-[-1] transition-opacity ${isCameraOff ? 'opacity-0' : 'opacity-100'}`} />
+                <div 
+                    ref={localVideoRef} 
+                    className={`absolute top-4 right-4 w-32 h-48 bg-black rounded-lg overflow-hidden border-2 border-slate-600 transform scale-x-[-1] transition-opacity ${isCameraOff ? 'opacity-0' : 'opacity-100'}`} 
+                />
             )}
 
             <div className="relative z-10 flex flex-col items-center justify-between h-full w-full p-6">
@@ -233,7 +251,7 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
                 </div>
 
                 <div className="flex flex-col items-center gap-6">
-                    {isFilterOn && isVideoCall && (
+                    {isFilterOn && isVideoCall && BANUBA_CLIENT_TOKEN && (
                         <div className="bg-black/40 backdrop-blur-sm p-3 rounded-full w-64 flex items-center gap-3">
                             <span className="text-sm font-semibold">Smooth</span>
                             <input
@@ -250,7 +268,7 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
                     <div className="flex items-center justify-center gap-4">
                         <button onClick={toggleMute} disabled={!isMicAvailable} className={`p-4 rounded-full transition-colors ${!isMicAvailable ? 'bg-red-600/50' : isMuted ? 'bg-rose-600' : 'bg-slate-700/80'}`}><Icon name={!isMicAvailable || isMuted ? 'microphone-slash' : 'mic'} className="w-6 h-6" /></button>
                         {isVideoCall && <button onClick={toggleCamera} disabled={!isCamAvailable} className={`p-4 rounded-full transition-colors ${!isCamAvailable ? 'bg-red-600/50' : isCameraOff ? 'bg-rose-600' : 'bg-slate-700/80'}`}><Icon name={!isCamAvailable || isCameraOff ? 'video-camera-slash' : 'video-camera'} className="w-6 h-6" /></button>}
-                        {isVideoCall && <button onClick={() => setIsFilterOn(p => !p)} className={`p-4 rounded-full transition-colors ${isFilterOn ? 'bg-fuchsia-600' : 'bg-slate-700/80'}`}><Icon name="swatch" className="w-6 h-6"/></button>}
+                        {isVideoCall && BANUBA_CLIENT_TOKEN && <button onClick={() => setIsFilterOn(p => !p)} className={`p-4 rounded-full transition-colors ${isFilterOn ? 'bg-fuchsia-600' : 'bg-slate-700/80'}`}><Icon name="swatch" className="w-6 h-6"/></button>}
                         <button onClick={handleHangUp} className="p-4 rounded-full bg-red-600"><svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" transform="rotate(-135 12 12)"/></svg></button>
                     </div>
                 </div>
