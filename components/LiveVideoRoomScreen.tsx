@@ -52,24 +52,23 @@ const ParticipantVideo: React.FC<{
         if (!videoContainer) return;
 
         const trackToPlay = isLocal ? localVideoTrack : participant.agoraUser?.videoTrack;
-        
-        // Clear previous video tracks to prevent duplicates
-        while (videoContainer.firstChild) {
-            videoContainer.removeChild(videoContainer.firstChild);
-        }
 
         if (trackToPlay && !participant.isCameraOff) {
+            // Agora SDK handles appending the video element.
+            // Calling play on a new container will move the element.
             trackToPlay.play(videoContainer, { fit: 'cover' });
         } else {
+            // If there's no track or camera is off, ensure it's stopped.
             trackToPlay?.stop();
         }
 
+        // The cleanup function is critical to stop playback when the track or component changes.
         return () => {
             if (trackToPlay?.isPlaying) {
                 trackToPlay.stop();
             }
         };
-    }, [participant.agoraUser, localVideoTrack, participant.isCameraOff, isLocal]);
+    }, [participant.agoraUser?.videoTrack, localVideoTrack, participant.isCameraOff, isLocal]);
     
     const showVideo = !participant.isCameraOff && (isLocal ? localVideoTrack : participant.agoraUser?.hasVideo);
 

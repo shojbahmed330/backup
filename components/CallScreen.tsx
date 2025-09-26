@@ -54,18 +54,26 @@ const CallScreen: React.FC<CallScreenProps> = ({ currentUser, peerUser, callId, 
 
     // Call state listener
     useEffect(() => {
+        let isMounted = true;
         const unsubscribe = firebaseService.listenToCall(callId, (liveCall) => {
+            if (!isMounted) return;
+
             setCall(liveCall);
-            callStatusRef.current = liveCall?.status || null;
-            if (!liveCall || ['ended', 'declined', 'missed'].includes(liveCall.status)) {
+            const currentStatus = liveCall?.status || null;
+            callStatusRef.current = currentStatus;
+
+            if (!liveCall || ['ended', 'declined', 'missed'].includes(currentStatus)) {
+                // If the call ends, wait a moment to show the status, then go back.
                 setTimeout(() => {
-                    if (callStatusRef.current !== 'active' && callStatusRef.current !== 'ringing') {
-                        onGoBack();
-                    }
-                }, 2000);
+                    if (isMounted) onGoBack();
+                }, 1500); 
             }
         });
-        return unsubscribe;
+        
+        return () => {
+            isMounted = false;
+            unsubscribe();
+        };
     }, [callId, onGoBack]);
 
     // Timer effect
