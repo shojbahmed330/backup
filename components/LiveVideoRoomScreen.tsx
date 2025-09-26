@@ -395,6 +395,14 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
                         </div>
                     </div>
                 )}
+                <div className={`absolute bottom-0 left-0 right-0 p-4 z-30 transition-all duration-300 ${controlsVisible || !isMobile ? 'animate-controls-fade-in' : 'animate-controls-fade-out pointer-events-none'}`}>
+                    <div className="max-w-md mx-auto bg-black/50 backdrop-blur-md p-3 rounded-full flex items-center justify-center gap-4">
+                        <button onClick={toggleMute} disabled={!isMicAvailable} className={`p-4 rounded-full transition-colors ${!isMicAvailable ? 'bg-red-600/50' : isMuted ? 'bg-rose-600' : 'bg-slate-700'}`}><Icon name={!isMicAvailable || isMuted ? 'microphone-slash' : 'mic'} className="w-6 h-6" /></button>
+                        <button onClick={toggleCamera} disabled={!isCamAvailable} className={`p-4 rounded-full transition-colors ${!isCamAvailable ? 'bg-red-600/50' : isCameraOff ? 'bg-rose-600' : 'bg-slate-700'}`}><Icon name={!isCamAvailable || isCameraOff ? 'video-camera-slash' : 'video-camera'} className="w-6 h-6" /></button>
+                        {isMobile && <button onClick={() => setIsChatOpen(true)} className="p-4 rounded-full bg-slate-700"><Icon name="message" className="w-6 h-6"/></button>}
+                        <button onClick={handleLeaveOrEnd} className="p-4 rounded-full bg-red-600"><svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" transform="rotate(-135 12 12)"/></svg></button>
+                    </div>
+                </div>
             </main>
             
             <aside className={`w-full md:w-80 flex-shrink-0 bg-black/50 backdrop-blur-sm border-l border-white/10 flex flex-col z-20 transition-transform duration-300 ${isMobile ? `fixed inset-0 transform ${isChatOpen ? 'animate-slide-in-right' : isChatOpen === false ? 'animate-slide-out-right' : 'translate-x-full'}` : ''}`}>
@@ -413,15 +421,6 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
                     </form>
                 </footer>
             </aside>
-            
-            <div className={`absolute bottom-0 left-0 right-0 p-4 z-30 transition-all duration-300 ${controlsVisible || !isMobile ? 'animate-controls-fade-in' : 'animate-controls-fade-out pointer-events-none'}`}>
-                <div className="max-w-md mx-auto bg-black/50 backdrop-blur-md p-3 rounded-full flex items-center justify-center gap-4">
-                    <button onClick={toggleMute} disabled={!isMicAvailable} className={`p-4 rounded-full transition-colors ${!isMicAvailable ? 'bg-red-600/50' : isMuted ? 'bg-rose-600' : 'bg-slate-700'}`}><Icon name={!isMicAvailable || isMuted ? 'microphone-slash' : 'mic'} className="w-6 h-6" /></button>
-                    <button onClick={toggleCamera} disabled={!isCamAvailable} className={`p-4 rounded-full transition-colors ${!isCamAvailable ? 'bg-red-600/50' : isCameraOff ? 'bg-rose-600' : 'bg-slate-700'}`}><Icon name={!isCamAvailable || isCameraOff ? 'video-camera-slash' : 'video-camera'} className="w-6 h-6" /></button>
-                    {isMobile && <button onClick={() => setIsChatOpen(true)} className="p-4 rounded-full bg-slate-700"><Icon name="message" className="w-6 h-6"/></button>}
-                    <button onClick={handleLeaveOrEnd} className="p-4 rounded-full bg-red-600"><svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" transform="rotate(-135 12 12)"/></svg></button>
-                </div>
-            </div>
         </div>
     );
 };
