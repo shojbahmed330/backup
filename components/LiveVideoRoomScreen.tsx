@@ -6,56 +6,70 @@ import { AGORA_APP_ID } from '../constants';
 import AgoraRTC from 'agora-rtc-sdk-ng';
 import type { IAgoraRTCClient, IAgoraRTCRemoteUser, IMicrophoneAudioTrack, ICameraVideoTrack } from 'agora-rtc-sdk-ng';
 
-const EMOJI_LIST = ['❤️', '😂', '👍', '🎉', '🔥', '🙏', '😮', '😢', '🤔', '🥳'];
+// --- Helper Functions & Types ---
+
+type CombinedParticipant = VideoParticipantState & {
+    agoraUser?: IAgoraRTCRemoteUser;
+    isSpeaking?: boolean;
+};
 
 function stringToIntegerHash(str: string): number {
+  if (!str) return 0;
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
-    hash |= 0; // Convert to 32bit integer
+    hash |= 0;
   }
   return Math.abs(hash);
 }
 
+const useIsMobile = () => {
+    const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+    useEffect(() => {
+        const handleResize = () => setIsMobile(window.innerWidth < 768);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+    return isMobile;
+};
+
+
+// --- Sub-components ---
+
 const ParticipantVideo: React.FC<{
-    participant: VideoParticipantState;
+    participant: CombinedParticipant;
     isLocal: boolean;
-    isSpeaking: boolean;
     localVideoTrack: ICameraVideoTrack | null;
-    remoteUser: IAgoraRTCRemoteUser | undefined;
     onClick?: () => void;
     isMainView?: boolean;
-}> = ({ participant, isLocal, isSpeaking, localVideoTrack, remoteUser, onClick, isMainView = false }) => {
+}> = ({ participant, isLocal, localVideoTrack, onClick, isMainView }) => {
     const videoRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         const videoContainer = videoRef.current;
         if (!videoContainer) return;
 
-        let trackToPlay: ICameraVideoTrack | undefined | null = isLocal ? localVideoTrack : remoteUser?.videoTrack;
-        
+        const trackToPlay = isLocal ? localVideoTrack : participant.agoraUser?.videoTrack;
+
         if (trackToPlay && !participant.isCameraOff) {
             trackToPlay.play(videoContainer, { fit: 'cover' });
         } else {
-            const playingTrack = isLocal ? localVideoTrack : remoteUser?.videoTrack;
-            if (playingTrack && playingTrack.isPlaying) {
-                playingTrack.stop();
-            }
+            trackToPlay?.stop();
         }
 
         return () => {
-            if (trackToPlay && trackToPlay.isPlaying) {
+            if (trackToPlay?.isPlaying) {
                 trackToPlay.stop();
             }
         };
-    }, [isLocal, localVideoTrack, remoteUser, participant.isCameraOff]);
+    }, [participant.agoraUser, localVideoTrack, participant.isCameraOff, isLocal]);
     
-    const showVideo = (isLocal && localVideoTrack && !participant.isCameraOff) || (!isLocal && remoteUser?.hasVideo && !participant.isCameraOff);
+    const showVideo = !participant.isCameraOff && (isLocal ? localVideoTrack : participant.agoraUser?.hasVideo);
 
     return (
         <div 
-            className={`w-full h-full bg-slate-800 relative group overflow-hidden rounded-lg ${onClick ? 'cursor-pointer' : ''}`}
+            className={`w-full h-full bg-slate-900 relative group overflow-hidden rounded-lg transition-all duration-300 ${onClick ? 'cursor-pointer' : ''}`}
             onClick={onClick}
         >
             {showVideo ? (
@@ -65,8 +79,9 @@ const ParticipantVideo: React.FC<{
                     <img src={participant.avatarUrl} alt={participant.name} className="w-24 h-24 object-cover rounded-full opacity-50" />
                 </div>
             )}
-             <div className={`absolute inset-0 border-4 pointer-events-none transition-all duration-300 ${isSpeaking ? 'border-green-400 ring-4 ring-green-400/30' : 'border-transparent'}`} />
-             <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/70 to-transparent">
+             <div className={`absolute inset-0 border-4 pointer-events-none rounded-lg transition-all duration-300 ${participant.isSpeaking ? 'border-green-400 ring-4 ring-green-400/30' : 'border-transparent'}`} />
+             <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/70 to-transparent flex items-center gap-2">
+                 {participant.isMuted && <Icon name="microphone-slash" className="w-4 h-4 text-white flex-shrink-0" />}
                  <p className={`font-semibold text-white truncate text-shadow-lg ${isMainView ? 'text-lg' : 'text-sm'}`}>{participant.name}</p>
              </div>
         </div>
@@ -87,6 +102,9 @@ const ChatMessage: React.FC<{ message: LiveVideoRoomMessage; isMe: boolean }> = 
     );
 };
 
+
+// --- Main Component ---
+
 interface LiveVideoRoomScreenProps {
     currentUser: User;
     roomId: string;
@@ -94,28 +112,17 @@ interface LiveVideoRoomScreenProps {
     onSetTtsMessage: (message: string) => void;
 }
 
-const useIsMobile = () => {
-    const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-    useEffect(() => {
-        const handleResize = () => setIsMobile(window.innerWidth < 768);
-        window.addEventListener('resize', handleResize);
-        return () => window.removeEventListener('resize', handleResize);
-    }, []);
-    return isMobile;
-};
-
 const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, roomId, onGoBack, onSetTtsMessage }) => {
     const [room, setRoom] = useState<LiveVideoRoom | null>(null);
+    const [participants, setParticipants] = useState<CombinedParticipant[]>([]);
     const [messages, setMessages] = useState<LiveVideoRoomMessage[]>([]);
     const [newMessage, setNewMessage] = useState('');
     const [isChatOpen, setIsChatOpen] = useState(false);
     
-    const [remoteUsers, setRemoteUsers] = useState<IAgoraRTCRemoteUser[]>([]);
     const [isMuted, setIsMuted] = useState(false);
     const [isCameraOff, setIsCameraOff] = useState(false);
     const [isMicAvailable, setIsMicAvailable] = useState(true);
     const [isCamAvailable, setIsCamAvailable] = useState(true);
-    const [activeSpeakerUid, setActiveSpeakerUid] = useState<number | null>(null);
 
     const agoraClient = useRef<IAgoraRTCClient | null>(null);
     const localAudioTrack = useRef<IMicrophoneAudioTrack | null>(null);
@@ -126,30 +133,157 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
     const [mainParticipantId, setMainParticipantId] = useState<string | null>(null);
     const [controlsVisible, setControlsVisible] = useState(true);
     const controlsTimeoutRef = useRef<number | null>(null);
+
+    // Sync Firestore & Agora data into a unified `participants` state
+    useEffect(() => {
+        if (!room) return;
+        setParticipants(prevParticipants => {
+            const newParticipantsFromRoom = room.participants;
+            const prevMap = new Map(prevParticipants.map(p => [p.id, p]));
+            return newParticipantsFromRoom.map(newP => {
+                const oldP = prevMap.get(newP.id);
+                // FIX: Added an explicit check for `oldP` to help TypeScript infer its type correctly,
+                // resolving the "property does not exist on type 'unknown'" error.
+                if (oldP) {
+                    // Preserve agoraUser and isSpeaking from previous state
+                    return { ...newP, agoraUser: oldP.agoraUser, isSpeaking: oldP.isSpeaking };
+                }
+                // For new participants, initialize with default values
+                return { ...newP, agoraUser: undefined, isSpeaking: false };
+            });
+        });
+    }, [room]);
     
-    useEffect(() => {
-        setIsChatOpen(!isMobile); // Chat is open by default on desktop
-    }, [isMobile]);
-
-    useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages]);
-
+    // Manage Agora connection and event listeners
     useEffect(() => {
         let isMounted = true;
-        const setupAgora = async () => { /* ... existing setup logic ... */ };
-        const initialize = async () => {
-            await geminiService.joinLiveVideoRoom(currentUser.id, roomId);
-            await setupAgora();
+        const client = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
+        agoraClient.current = client;
+
+        const handleUserPublished = async (user: IAgoraRTCRemoteUser, mediaType: 'audio' | 'video') => {
+            await client.subscribe(user, mediaType);
+            if (!isMounted) return;
+            setParticipants(prev => prev.map(p => stringToIntegerHash(p.id) === user.uid ? { ...p, agoraUser: user } : p));
+            if (mediaType === 'audio') user.audioTrack?.play();
         };
-        // ... (rest of Agora setup from original code remains here)
-        // ...
-        return () => { /* ... existing cleanup logic ... */ };
+
+        const handleUserLeft = (user: IAgoraRTCRemoteUser) => {
+            if (!isMounted) return;
+            setParticipants(prev => prev.map(p => stringToIntegerHash(p.id) === user.uid ? { ...p, agoraUser: undefined } : p));
+        };
+
+        const handleVolumeIndicator = (volumes: { uid: number; level: number }[]) => {
+            if (!isMounted) return;
+            const speakingUids = new Set(volumes.filter(v => v.level > 10).map(v => v.uid));
+            setParticipants(prev => prev.map(p => ({ ...p, isSpeaking: speakingUids.has(stringToIntegerHash(p.id)) || (p.id === currentUser.id && speakingUids.has(client.uid)) })));
+        };
+
+        const setupAgora = async () => {
+            client.on('user-published', handleUserPublished);
+            client.on('user-left', handleUserLeft);
+            client.enableAudioVolumeIndicator();
+            client.on('volume-indicator', handleVolumeIndicator);
+
+            const uid = stringToIntegerHash(currentUser.id);
+            const token = await geminiService.getAgoraToken(roomId, uid);
+            if (!token) throw new Error("Failed to get Agora token.");
+
+            await client.join(AGORA_APP_ID, roomId, token, uid);
+
+            let initialMuted = false;
+            let initialCamOff = false;
+
+            try {
+                const audio = await AgoraRTC.createMicrophoneAudioTrack();
+                localAudioTrack.current = audio;
+                setIsMicAvailable(true);
+            } catch (e) {
+                console.warn("Mic not available", e);
+                setIsMicAvailable(false);
+                initialMuted = true;
+            }
+
+            try {
+                const video = await AgoraRTC.createCameraVideoTrack();
+                localVideoTrack.current = video;
+                setIsCamAvailable(true);
+            } catch (e) {
+                console.warn("Cam not available", e);
+                setIsCamAvailable(false);
+                initialCamOff = true;
+            }
+
+            const tracksToPublish = [localAudioTrack.current, localVideoTrack.current].filter(Boolean) as (IMicrophoneAudioTrack | ICameraVideoTrack)[];
+            if (tracksToPublish.length > 0) await client.publish(tracksToPublish);
+
+            setIsMuted(initialMuted);
+            setIsCameraOff(initialCamOff);
+
+            await geminiService.updateParticipantStateInVideoRoom(roomId, currentUser.id, { isMuted: initialMuted, isCameraOff: initialCamOff });
+        };
+
+        geminiService.joinLiveVideoRoom(currentUser.id, roomId)
+            .then(setupAgora)
+            .catch(err => {
+                console.error("Failed to join or setup Agora:", err);
+                onSetTtsMessage("Could not join the room.");
+                onGoBack();
+            });
+
+        return () => {
+            isMounted = false;
+            agoraClient.current?.leave();
+            localAudioTrack.current?.close();
+            localVideoTrack.current?.close();
+            geminiService.leaveLiveVideoRoom(currentUser.id, roomId);
+        };
     }, [roomId, currentUser.id, onGoBack, onSetTtsMessage]);
 
-    const handleLeaveOrEnd = () => { /* ... existing logic ... */ };
-    const toggleMute = () => { /* ... existing logic ... */ };
-    const toggleCamera = () => { /* ... existing logic ... */ };
+    // Firestore listeners
+    useEffect(() => {
+        const unsubRoom = geminiService.listenToVideoRoom(roomId, setRoom);
+        const unsubMessages = geminiService.listenToLiveVideoRoomMessages(roomId, setMessages);
+        return () => {
+            unsubRoom();
+            unsubMessages();
+        };
+    }, [roomId]);
+    
+    // Other useEffects for UI logic
+    useEffect(() => { setIsChatOpen(!isMobile); }, [isMobile]);
+    useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+    useEffect(() => {
+        if (isMobile) {
+            if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+            controlsTimeoutRef.current = window.setTimeout(() => setControlsVisible(false), 3000);
+        }
+        return () => { if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current); };
+    }, [controlsVisible, isMobile]);
+
+    // --- User Actions ---
+    const handleLeaveOrEnd = () => {
+        if (room?.host.id === currentUser.id) {
+            if (window.confirm("End this call for everyone?")) geminiService.endLiveVideoRoom(currentUser.id, roomId);
+        } else {
+            onGoBack();
+        }
+    };
+
+    const toggleMute = async () => {
+        if (!isMicAvailable) return;
+        const muted = !isMuted;
+        await localAudioTrack.current?.setMuted(muted);
+        setIsMuted(muted);
+        await geminiService.updateParticipantStateInVideoRoom(roomId, currentUser.id, { isMuted: muted });
+    };
+
+    const toggleCamera = async () => {
+        if (!isCamAvailable) return;
+        const cameraOff = !isCameraOff;
+        await localVideoTrack.current?.setEnabled(!cameraOff);
+        setIsCameraOff(cameraOff);
+        await geminiService.updateParticipantStateInVideoRoom(roomId, currentUser.id, { isCameraOff: cameraOff });
+    };
 
     const handleSendMessage = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -159,24 +293,10 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
             setNewMessage('');
         }
     };
-    
-    // Auto-hide controls on mobile
-    useEffect(() => {
-        if (isMobile) {
-            if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-            controlsTimeoutRef.current = window.setTimeout(() => setControlsVisible(false), 3000);
-        }
-        return () => {
-            if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-        };
-    }, [controlsVisible, isMobile]);
 
-
-    const allParticipants = useMemo(() => room?.participants || [], [room?.participants]);
-    const remoteUsersMap = useMemo(() => new Map(remoteUsers.map(u => [u.uid, u])), [remoteUsers]);
-
-    const mainParticipant = mainParticipantId ? allParticipants.find(p => p.id === mainParticipantId) : null;
-    const thumbnailParticipants = mainParticipantId ? allParticipants.filter(p => p.id !== mainParticipantId) : [];
+    // --- Rendering Logic ---
+    const mainParticipant = mainParticipantId ? participants.find(p => p.id === mainParticipantId) : null;
+    const thumbnailParticipants = mainParticipantId ? participants.filter(p => p.id !== mainParticipantId) : [];
 
     const getGridLayout = useCallback((count: number) => {
         if (count <= 1) return 'grid-cols-1 grid-rows-1';
@@ -187,27 +307,20 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
         return 'grid-cols-4 grid-rows-3';
     }, [isMobile]);
 
-    const renderParticipant = (p: VideoParticipantState, isMainView = false) => {
+    const renderParticipant = (p: CombinedParticipant, isMainView = false) => {
         const isLocal = p.id === currentUser.id;
-        const agoraUid = stringToIntegerHash(p.id);
-        const agoraUser = isLocal ? undefined : remoteUsersMap.get(agoraUid);
-        const participantState = isLocal ? { ...p, isMuted, isCameraOff } : p;
-        const agoraUidForSpeakingCheck = isLocal ? agoraClient.current?.uid : agoraUser?.uid;
-        
         return (
             <div
                 key={p.id}
                 className="relative rounded-lg overflow-hidden transition-all duration-300"
-                onClick={isMobile || isMainView ? undefined : () => setMainParticipantId(mainParticipantId === p.id ? null : p.id)}
+                onClick={isMainView ? undefined : () => setMainParticipantId(mainParticipantId === p.id ? null : p.id)}
             >
                 <ParticipantVideo
-                    participant={participantState}
+                    participant={p}
                     isLocal={isLocal}
-                    isSpeaking={activeSpeakerUid === agoraUidForSpeakingCheck}
                     localVideoTrack={localVideoTrack.current}
-                    remoteUser={agoraUser}
                     isMainView={isMainView}
-                    onClick={isMobile ? () => setMainParticipantId(mainParticipantId === p.id ? null : p.id) : undefined}
+                    onClick={isMainView ? undefined : () => setMainParticipantId(mainParticipantId === p.id ? null : p.id)}
                 />
             </div>
         );
@@ -217,17 +330,14 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
 
     return (
         <div className="h-full w-full flex flex-col md:flex-row bg-black text-white overflow-hidden">
-            <main 
-                className="flex-grow relative bg-black flex flex-col"
-                onClick={() => setControlsVisible(v => !v)}
-            >
+            <main className="flex-grow relative bg-black flex flex-col" onClick={() => setControlsVisible(v => !v)}>
                 {mainParticipant ? (
-                    <div className="flex-grow relative">
+                    <div className="flex-grow relative" onClick={() => setMainParticipantId(null)}>
                         {renderParticipant(mainParticipant, true)}
                     </div>
                 ) : (
-                    <div className={`flex-grow grid gap-1 p-1 ${getGridLayout(allParticipants.length)}`}>
-                        {allParticipants.map(p => renderParticipant(p))}
+                    <div className={`flex-grow grid gap-1 p-1 ${getGridLayout(participants.length)}`}>
+                        {participants.map(p => renderParticipant(p))}
                     </div>
                 )}
                 
@@ -244,9 +354,7 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
                 )}
             </main>
             
-            <aside className={`w-full md:w-80 flex-shrink-0 bg-black/50 backdrop-blur-sm border-l border-white/10 flex flex-col z-20 transition-transform duration-300
-                ${isMobile ? `fixed inset-0 transform ${isChatOpen ? 'translate-x-0' : 'translate-x-full'}` : ''}`}
-            >
+            <aside className={`w-full md:w-80 flex-shrink-0 bg-black/50 backdrop-blur-sm border-l border-white/10 flex flex-col z-20 transition-transform duration-300 ${isMobile ? `fixed inset-0 transform ${isChatOpen ? 'animate-slide-in-right' : isChatOpen === false ? 'animate-slide-out-right' : 'translate-x-full'}` : ''}`}>
                  <header className="p-3 flex-shrink-0 flex items-center justify-between border-b border-slate-700">
                     <h2 className="font-bold text-lg">{room.topic}</h2>
                     {isMobile && <button onClick={() => setIsChatOpen(false)} className="p-2 rounded-full hover:bg-slate-700"><Icon name="close" className="w-5 h-5"/></button>}
@@ -257,32 +365,18 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
                  </div>
                  <footer className="p-2 flex-shrink-0 border-t border-slate-700 bg-black/30">
                     <form onSubmit={handleSendMessage} className="flex items-center gap-2">
-                        <input
-                            type="text"
-                            value={newMessage}
-                            onChange={(e) => setNewMessage(e.target.value)}
-                            placeholder="Send a message..."
-                            className="w-full bg-slate-700/80 border border-slate-600 rounded-full py-2 px-4 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-rose-500"
-                        />
-                        <button type="submit" className="p-2.5 bg-rose-600 rounded-full text-white hover:bg-rose-500 disabled:bg-slate-500" disabled={!newMessage.trim()}>
-                            <Icon name="paper-airplane" className="w-5 h-5" />
-                        </button>
+                        <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="Send a message..." className="w-full bg-slate-700/80 border border-slate-600 rounded-full py-2 px-4 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-rose-500"/>
+                        <button type="submit" className="p-2.5 bg-rose-600 rounded-full text-white hover:bg-rose-500 disabled:bg-slate-500" disabled={!newMessage.trim()}><Icon name="paper-airplane" className="w-5 h-5" /></button>
                     </form>
                 </footer>
             </aside>
             
-            <div className={`absolute bottom-0 left-0 right-0 p-4 z-20 transition-all duration-300 ${controlsVisible || !isMobile ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full'}`}>
+            <div className={`absolute bottom-0 left-0 right-0 p-4 z-30 transition-all duration-300 ${controlsVisible || !isMobile ? 'animate-controls-fade-in' : 'animate-controls-fade-out pointer-events-none'}`}>
                 <div className="max-w-md mx-auto bg-black/50 backdrop-blur-md p-3 rounded-full flex items-center justify-center gap-4">
-                    <button onClick={toggleMute} disabled={!isMicAvailable} className={`p-4 rounded-full transition-colors ${!isMicAvailable ? 'bg-red-600/50' : isMuted ? 'bg-rose-600' : 'bg-slate-700'}`}>
-                        <Icon name={!isMicAvailable || isMuted ? 'microphone-slash' : 'mic'} className="w-6 h-6" />
-                    </button>
-                     <button onClick={toggleCamera} disabled={!isCamAvailable} className={`p-4 rounded-full transition-colors ${!isCamAvailable ? 'bg-red-600/50' : isCameraOff ? 'bg-rose-600' : 'bg-slate-700'}`}>
-                        <Icon name={!isCamAvailable || isCameraOff ? 'video-camera-slash' : 'video-camera'} className="w-6 h-6" />
-                    </button>
+                    <button onClick={toggleMute} disabled={!isMicAvailable} className={`p-4 rounded-full transition-colors ${!isMicAvailable ? 'bg-red-600/50' : isMuted ? 'bg-rose-600' : 'bg-slate-700'}`}><Icon name={!isMicAvailable || isMuted ? 'microphone-slash' : 'mic'} className="w-6 h-6" /></button>
+                    <button onClick={toggleCamera} disabled={!isCamAvailable} className={`p-4 rounded-full transition-colors ${!isCamAvailable ? 'bg-red-600/50' : isCameraOff ? 'bg-rose-600' : 'bg-slate-700'}`}><Icon name={!isCamAvailable || isCameraOff ? 'video-camera-slash' : 'video-camera'} className="w-6 h-6" /></button>
                     {isMobile && <button onClick={() => setIsChatOpen(true)} className="p-4 rounded-full bg-slate-700"><Icon name="message" className="w-6 h-6"/></button>}
-                    <button onClick={handleLeaveOrEnd} className="p-4 rounded-full bg-red-600">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" transform="rotate(-135 12 12)"/></svg>
-                    </button>
+                    <button onClick={handleLeaveOrEnd} className="p-4 rounded-full bg-red-600"><svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" transform="rotate(-135 12 12)"/></svg></button>
                 </div>
             </div>
         </div>
