@@ -52,6 +52,11 @@ const ParticipantVideo: React.FC<{
         if (!videoContainer) return;
 
         const trackToPlay = isLocal ? localVideoTrack : participant.agoraUser?.videoTrack;
+        
+        // Clear previous video tracks to prevent duplicates
+        while (videoContainer.firstChild) {
+            videoContainer.removeChild(videoContainer.firstChild);
+        }
 
         if (trackToPlay && !participant.isCameraOff) {
             trackToPlay.play(videoContainer, { fit: 'cover' });
@@ -115,7 +120,6 @@ interface LiveVideoRoomScreenProps {
 
 const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, roomId, onGoBack, onSetTtsMessage }) => {
     const [room, setRoom] = useState<LiveVideoRoom | null>(null);
-    const [participants, setParticipants] = useState<CombinedParticipant[]>([]);
     const [messages, setMessages] = useState<LiveVideoRoomMessage[]>([]);
     const [newMessage, setNewMessage] = useState('');
     const [isChatOpen, setIsChatOpen] = useState(false);
@@ -129,8 +133,8 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
     const localAudioTrack = useRef<IMicrophoneAudioTrack | null>(null);
     const localVideoTrack = useRef<ICameraVideoTrack | null>(null);
     
-    const [localVideoTrackState, setLocalVideoTrackState] = useState<ICameraVideoTrack | null>(null);
-    const [remoteUser, setRemoteUser] = useState<IAgoraRTCRemoteUser | null>(null);
+    const [remoteUsers, setRemoteUsers] = useState<IAgoraRTCRemoteUser[]>([]);
+    const [speakingVolumes, setSpeakingVolumes] = useState<{ uid: number; level: number }[]>([]);
     
     // Video UI State
     const [mainParticipantId, setMainParticipantId] = useState<string | null>(null);
@@ -139,10 +143,6 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const isMobile = useIsMobile();
-    const [previewPosition, setPreviewPosition] = useState({ x: 16, y: 16 });
-    const dragInfo = useRef<{ startX: number, startY: number, hasDragged: boolean, isDragging: boolean }>({ startX: 0, startY: 0, hasDragged: false, isDragging: false });
-    // FIX: Removed unused ref that was causing type errors.
-    
 
     // Agora Lifecycle and state management
     useEffect(() => {
@@ -153,24 +153,20 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
         const handleUserPublished = async (user: IAgoraRTCRemoteUser, mediaType: 'audio' | 'video') => {
             await client.subscribe(user, mediaType);
             if (!isMounted) return;
-            setRemoteUser(user);
-             if (mediaType === 'audio') user.audioTrack?.play();
+            setRemoteUsers(prev => [...prev.filter(u => u.uid !== user.uid), user]);
+            if (mediaType === 'audio') user.audioTrack?.play();
         };
 
-        // FIX: Corrected handleUserLeft to remove incorrect logic copied from another component.
-        // The Firestore listener will handle participant list updates. This just handles Agora state.
         const handleUserLeft = (user: IAgoraRTCRemoteUser) => {
              if (!isMounted) return;
-             setRemoteUser(null);
+             setRemoteUsers(prev => prev.filter(u => u.uid !== user.uid));
         };
-
+        
         const handleVolumeIndicator = (volumes: { uid: number; level: number }[]) => {
-            if (!isMounted) return;
-            const speakingUids = new Set(volumes.filter(v => v.level > 10).map(v => v.uid));
-            setParticipants(prev => prev.map(p => ({ ...p, isSpeaking: speakingUids.has(stringToIntegerHash(p.id)) })));
+            if (isMounted) setSpeakingVolumes(volumes);
         };
 
-        const setupAgora = async (callType: 'audio' | 'video') => {
+        const setupAgora = async () => {
             client.on('user-published', handleUserPublished);
             client.on('user-left', handleUserLeft);
             client.enableAudioVolumeIndicator();
@@ -179,48 +175,46 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
             const uid = stringToIntegerHash(currentUser.id);
             const token = await geminiService.getAgoraToken(roomId, uid);
             if (!token) throw new Error("Failed to get Agora token.");
+            
             await client.join(AGORA_APP_ID, roomId, token, uid);
 
-            let initialMuted = false;
-            let initialCamOff = false;
+            let finalMuted = false;
+            let finalCamOff = false;
+            const tracksToPublish: (IMicrophoneAudioTrack | ICameraVideoTrack)[] = [];
 
             try {
                 const audio = await AgoraRTC.createMicrophoneAudioTrack();
                 localAudioTrack.current = audio;
+                tracksToPublish.push(audio);
                 setIsMicAvailable(true);
             } catch (e) {
                 console.warn("Mic not available", e);
                 setIsMicAvailable(false);
-                initialMuted = true;
+                finalMuted = true;
+            }
+            
+            try {
+                const video = await AgoraRTC.createCameraVideoTrack();
+                localVideoTrack.current = video;
+                tracksToPublish.push(video);
+                setIsCamAvailable(true);
+            } catch (e) {
+                console.warn("Cam not available", e);
+                setIsCamAvailable(false);
+                finalCamOff = true;
+            }
+            
+            if (tracksToPublish.length > 0) {
+                await client.publish(tracksToPublish);
             }
 
-            if (callType === 'video') {
-                try {
-                    const video = await AgoraRTC.createCameraVideoTrack();
-                    localVideoTrack.current = video;
-                    setLocalVideoTrackState(video);
-                    setIsCamAvailable(true);
-                } catch (e) {
-                    console.warn("Cam not available", e);
-                    setIsCamAvailable(false);
-                    initialCamOff = true;
-                }
-            }
-            const tracksToPublish = [localAudioTrack.current, localVideoTrack.current].filter(Boolean) as (IMicrophoneAudioTrack | ICameraVideoTrack)[];
-            if (tracksToPublish.length > 0) await client.publish(tracksToPublish);
-
-            setIsMuted(initialMuted);
-            setIsCameraOff(initialCamOff);
-
-            await geminiService.updateParticipantStateInVideoRoom(roomId, currentUser.id, { isMuted: initialMuted, isCameraOff: initialCamOff });
+            setIsMuted(finalMuted);
+            setIsCameraOff(finalCamOff);
+            await geminiService.updateParticipantStateInVideoRoom(roomId, currentUser.id, { isMuted: finalMuted, isCameraOff: finalCamOff });
         };
 
         geminiService.joinLiveVideoRoom(currentUser.id, roomId)
-            .then(() => geminiService.getRoomDetails(roomId, 'video'))
-            .then(roomDetails => {
-                 // FIX: Correctly call setupAgora for a video room. The 'type' property does not exist on the room object.
-                 if (roomDetails && isMounted) setupAgora('video');
-            })
+            .then(() => { if (isMounted) setupAgora(); })
             .catch(err => {
                 console.error("Failed to join or setup Agora:", err);
                 onSetTtsMessage("Could not join the room.");
@@ -229,9 +223,13 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
 
         return () => {
             isMounted = false;
-            agoraClient.current?.leave();
+            const tracksToUnpublish = [localAudioTrack.current, localVideoTrack.current].filter(Boolean) as (IMicrophoneAudioTrack | ICameraVideoTrack)[];
+            if (tracksToUnpublish.length > 0 && agoraClient.current) {
+                agoraClient.current.unpublish(tracksToUnpublish).catch(e => console.error("Failed to unpublish on leave", e));
+            }
             localAudioTrack.current?.close();
             localVideoTrack.current?.close();
+            agoraClient.current?.leave();
             geminiService.leaveLiveVideoRoom(currentUser.id, roomId);
         };
     }, [roomId, currentUser.id, onGoBack, onSetTtsMessage]);
@@ -240,21 +238,6 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
     useEffect(() => {
         const unsubRoom = geminiService.listenToVideoRoom(roomId, (liveRoom) => {
             if (liveRoom) {
-                // Ensure local user is always in the list with the most up-to-date local state
-                const currentParticipants = liveRoom.participants || [];
-                const localUserInList = currentParticipants.some(p => p.id === currentUser.id);
-
-                if (!localUserInList) {
-                    const localParticipantPlaceholder: VideoParticipantState = {
-                        id: currentUser.id, name: currentUser.name, username: currentUser.username,
-                        avatarUrl: currentUser.avatarUrl, isMuted, isCameraOff,
-                    };
-                    liveRoom.participants = [localParticipantPlaceholder, ...currentParticipants];
-                } else {
-                    liveRoom.participants = currentParticipants.map(p => 
-                        p.id === currentUser.id ? { ...p, isMuted, isCameraOff } : p
-                    );
-                }
                 setRoom(liveRoom);
             } else {
                 onGoBack();
@@ -265,48 +248,47 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
             unsubRoom();
             unsubMessages();
         };
-    }, [roomId, currentUser, onGoBack, isMuted, isCameraOff]);
+    }, [roomId, onGoBack]);
 
-     // Sync Agora user objects with participants list
-     useEffect(() => {
-        if (!room) return;
-        const remoteAgoraUser = remoteUser;
-        
-        // FIX: Rewrote state update to be safer against spread errors and fix a stale closure bug.
-        setParticipants(prevParticipants => {
-            const participantMap = new Map(prevParticipants.map(p => [p.id, p]));
+    const participants = useMemo<CombinedParticipant[]>(() => {
+        if (!room) return [];
 
-            // Update or create local participant state
-            const existingLocal = participantMap.get(currentUser.id);
-            const localParticipantUpdate: CombinedParticipant = {
-                ...(existingLocal || {
-                    id: currentUser.id,
-                    name: currentUser.name,
-                    username: currentUser.username,
-                    avatarUrl: currentUser.avatarUrl,
-                    isMuted: false,
-                    isCameraOff: false,
-                }),
-                isMuted,
-                isCameraOff,
-            };
-            participantMap.set(currentUser.id, localParticipantUpdate);
+        const speakingUids = new Set(
+            speakingVolumes.filter(v => v.level > 10).map(v => v.uid)
+        );
 
-            // Update remote participant with Agora user object
-            if (remoteAgoraUser) {
-                const remoteParticipantId = prevParticipants.find(p => stringToIntegerHash(p.id) === remoteAgoraUser.uid)?.id;
-                if(remoteParticipantId) {
-                    const remoteParticipant = participantMap.get(remoteParticipantId);
-                    if(remoteParticipant) {
-                         participantMap.set(remoteParticipantId, { ...remoteParticipant, agoraUser: remoteAgoraUser });
-                    }
-                }
+        const combined = (room.participants || []).map(p => {
+            const isSpeaking = speakingUids.has(stringToIntegerHash(p.id));
+            
+            if (p.id === currentUser.id) {
+                return {
+                    ...p,
+                    isMuted: isMuted,
+                    isCameraOff: isCameraOff,
+                    isSpeaking
+                };
             }
             
-            return Array.from(participantMap.values());
+            const agoraUser = remoteUsers.find(u => u.uid === stringToIntegerHash(p.id));
+            
+            return {
+                ...p,
+                agoraUser,
+                isSpeaking
+            };
         });
-    }, [room, remoteUser, currentUser, isMuted, isCameraOff]);
 
+        // Ensure the local user is always in the list, even if Firestore is slow
+        if (!combined.some(p => p.id === currentUser.id)) {
+            combined.unshift({
+                id: currentUser.id, name: currentUser.name, username: currentUser.username,
+                avatarUrl: currentUser.avatarUrl, isMuted, isCameraOff,
+                isSpeaking: speakingUids.has(stringToIntegerHash(currentUser.id))
+            });
+        }
+
+        return combined;
+    }, [room, remoteUsers, speakingVolumes, currentUser.id, currentUser.name, currentUser.username, currentUser.avatarUrl, isMuted, isCameraOff]);
 
     
     // Other useEffects for UI logic
@@ -323,7 +305,9 @@ const LiveVideoRoomScreen: React.FC<LiveVideoRoomScreenProps> = ({ currentUser, 
     // --- User Actions ---
     const handleLeaveOrEnd = () => {
         if (room?.host.id === currentUser.id) {
-            if (window.confirm("End this call for everyone?")) geminiService.endLiveVideoRoom(currentUser.id, roomId);
+            if (window.confirm("End this call for everyone?")) {
+                 geminiService.endLiveVideoRoom(currentUser.id, roomId);
+            }
         } else {
             onGoBack();
         }
